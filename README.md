@@ -18,6 +18,12 @@
   </p>
 </div>
 
+## 界面预览
+
+<p align="center">
+  <img src="docs/images/dashboard.jpg" alt="Mihomo Desktop Dashboard" width="900" />
+</p>
+
 ## 为什么选择 Mihomo Desktop
 
 - **原生轻量高性能**：纯 Rust + GPUI GPU 加速渲染，无 Electron / Chromium 内存开销。
