@@ -1,0 +1,1122 @@
+use crate::config::{format_bytes, format_speed};
+use crate::system::proxy::SystemProxyTakeoverState;
+use crate::system::service::ServiceState;
+use crate::ui::app::MihomoApp;
+use crate::ui::{AppPage, ProxySort, card, delay_color, delay_text, pill_badge, section_header};
+
+use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::Input;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+
+impl MihomoApp {
+    pub fn render_dashboard_page(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let svc_running = self.service_status.state.is_running();
+        let svc_not_installed = self.service_status.state == ServiceState::NotInstalled;
+        let core_missing = !std::path::Path::new(&self.settings.core_binary_path).exists();
+        let svc_color = if svc_running {
+            theme.success
+        } else {
+            theme.danger
+        };
+
+        let current_mode = self
+            .mihomo_config
+            .as_ref()
+            .map(|c| c.mode.to_ascii_lowercase())
+            .unwrap_or_else(|| "rule".to_string());
+
+        let (up, down, mem_inuse, history) = {
+            let t = self.telemetry.lock().unwrap();
+            (
+                t.current_traffic.up,
+                t.current_traffic.down,
+                t.memory.inuse,
+                t.traffic_history.iter().copied().collect::<Vec<_>>(),
+            )
+        };
+
+        let active_conns = self
+            .connections
+            .connections
+            .as_ref()
+            .map(|c| c.len())
+            .unwrap_or(0);
+        let total_down = self.connections.download_total;
+        let total_up = self.connections.upload_total;
+
+        let active_profile = self
+            .settings
+            .active_profile_id
+            .as_ref()
+            .and_then(|id| self.profiles.profiles.iter().find(|p| &p.id == id));
+
+        let (proxy_takeover_state, proxy_takeover_reason) = self.system_proxy_takeover_state();
+        let proxy_state_color = match proxy_takeover_state {
+            SystemProxyTakeoverState::ManagedEffective => theme.success,
+            SystemProxyTakeoverState::ManagedIneffective => theme.warning,
+            SystemProxyTakeoverState::Unmanaged => theme.muted_foreground,
+        };
+        let proxy_badge_label = match proxy_takeover_state {
+            SystemProxyTakeoverState::ManagedEffective => "已生效",
+            SystemProxyTakeoverState::ManagedIneffective => "未生效",
+            SystemProxyTakeoverState::Unmanaged => "未接管",
+        };
+        let proxy_sub = match proxy_takeover_state {
+            SystemProxyTakeoverState::ManagedEffective => {
+                format!("127.0.0.1:{}", self.settings.mixed_port)
+            }
+            SystemProxyTakeoverState::ManagedIneffective => proxy_takeover_reason
+                .unwrap_or("请检查代理设置或服务状态")
+                .to_string(),
+            SystemProxyTakeoverState::Unmanaged => {
+                format!("端口 127.0.0.1:{}", self.settings.mixed_port)
+            }
+        };
+
+        let tun_info = self.mihomo_config.as_ref().and_then(|c| c.tun.as_ref());
+        let tun_active = tun_info.is_some_and(|t| t.enable);
+        let tun_sub = match tun_info {
+            Some(t) if t.enable => format!(
+                "{} · {}",
+                if t.device.is_empty() { "Mihomo" } else { &t.device },
+                if t.stack.is_empty() { "system" } else { &t.stack }
+            ),
+            _ => "开启时缺失则注入默认 TUN/DNS".to_string(),
+        };
+
+        let max_speed = history
+            .iter()
+            .map(|p| p.down.max(p.up))
+            .max()
+            .unwrap_or(1)
+            .max(1024);
+
+        div()
+            .id("dashboard-scroll")
+            .v_flex()
+            .size_full()
+            .gap_4()
+            .pr_2()
+            .overflow_y_scrollbar()
+            // 1. Windows Service Lifecycle Hero Card
+            .child(
+                card(cx)
+                    .v_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .justify_between()
+                            .flex_wrap()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                Icon::new(IconName::Server)
+                                                    .size_5()
+                                                    .text_color(theme.primary),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_lg()
+                                                    .font_bold()
+                                                    .child(format!(
+                                                        "Windows 服务: {}",
+                                                        self.service_status.service_name
+                                                    )),
+                                            )
+                                            .child(pill_badge(
+                                                self.service_status.state.label(),
+                                                svc_color,
+                                            ))
+                                            .when_some(self.service_status.pid, |el, pid| {
+                                                el.child(pill_badge(
+                                                    format!("PID {pid}"),
+                                                    theme.muted_foreground,
+                                                ))
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(format!(
+                                                "启动类型: {}  |  控制器: http://{}  |  核心版本: {}",
+                                                self.service_status.start_type,
+                                                self.settings.controller_addr,
+                                                self.version
+                                                    .as_ref()
+                                                    .map(|v| v.version.as_str())
+                                                    .unwrap_or("未连接")
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .when(svc_not_installed, |el| {
+                                        el.child(
+                                            Button::new("svc-install-now")
+                                                .primary()
+                                                .small()
+                                                .icon(IconName::Wrench)
+                                                .label("一键安装并启动服务")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.install_windows_service();
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    })
+                                    .when(!svc_not_installed, |el| {
+                                        el.child(
+                                            Button::new("svc-start")
+                                                .primary()
+                                                .small()
+                                                .icon(IconName::Play)
+                                                .label("启动服务")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.start_windows_service();
+                                                    cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("svc-restart")
+                                                .small()
+                                                .icon(IconName::RotateCw)
+                                                .label("重启服务")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.restart_windows_service();
+                                                    cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("svc-stop")
+                                                .danger()
+                                                .small()
+                                                .icon(IconName::Square)
+                                                .label("停止服务")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.stop_windows_service();
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    }),
+                            ),
+                    )
+                    .when(svc_not_installed || core_missing, |el| {
+                        el.child(
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_3()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .bg(theme.info.opacity(0.14))
+                                .border_1()
+                                .border_color(theme.info.opacity(0.35))
+                                .text_xs()
+                                .text_color(theme.info)
+                                .child(if svc_not_installed && core_missing {
+                                    "检测到本机尚未安装 Mihomo 服务且缺少核心文件：请先运行安装程序，或在「核心管理」下载核心后点击「一键安装并启动服务」。"
+                                } else if svc_not_installed {
+                                    "检测到本机尚未注册 Mihomo Windows 服务：点击「一键安装并启动服务」将自动创建初始配置、注册开机自启服务并授予普通用户免 UAC 启停权限。"
+                                } else {
+                                    "检测到目标路径缺少 mihomo.exe：请前往「核心管理」下载或部署核心文件。"
+                                })
+                                .when(core_missing, |inner| {
+                                    inner.child(
+                                        Button::new("goto-cores-fix")
+                                            .xsmall()
+                                            .primary()
+                                            .label("前往核心管理")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.page = AppPage::Cores;
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
+                        )
+                    })
+                    .when(!self.api_online && !svc_not_installed, |el| {
+                        let err = self
+                            .api_error
+                            .as_deref()
+                            .unwrap_or("无法连接到 Mihomo 外部控制接口");
+                        el.child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .bg(theme.warning.opacity(0.14))
+                                .border_1()
+                                .border_color(theme.warning.opacity(0.35))
+                                .text_xs()
+                                .text_color(theme.warning)
+                                .child(format!(
+                                    "提示：控制器 http://{} 暂未响应（{err}）。请确认服务已启动或在「应用设置」核对地址与密钥。",
+                                    self.settings.controller_addr
+                                )),
+                        )
+                    }),
+            )
+            // 2. Quick Toggles Row (3 uniform 2-row cards: System Proxy / TUN Mode / Resident Mode)
+            .child(
+                div()
+                    .h_flex()
+                    .w_full()
+                    .items_stretch()
+                    .gap_3()
+                    // System Proxy Card (uniform 2-row layout)
+                    .child(
+                        card(cx)
+                            .flex_1()
+                            .min_w_0()
+                            .v_flex()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .h(px(24.))
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .min_w_0()
+                                            .child(
+                                                Icon::new(IconName::Globe)
+                                                    .size_4()
+                                                    .text_color(theme.primary),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_semibold()
+                                                    .whitespace_nowrap()
+                                                    .child("系统代理"),
+                                            )
+                                            .child(pill_badge(
+                                                proxy_badge_label,
+                                                proxy_state_color,
+                                            )),
+                                    )
+                                    .child(
+                                        Switch::new("dash-sys-proxy")
+                                            .checked(self.settings.system_proxy_managed)
+                                            .on_change(cx.listener(|this, checked, _, cx| {
+                                                this.toggle_system_proxy(*checked);
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .h(px(22.))
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .text_xs()
+                                            .text_color(
+                                                if proxy_takeover_state
+                                                    == SystemProxyTakeoverState::ManagedIneffective
+                                                {
+                                                    theme.warning
+                                                } else {
+                                                    theme.muted_foreground
+                                                },
+                                            )
+                                            .child(proxy_sub),
+                                    )
+                                    .when(
+                                        proxy_takeover_state
+                                            == SystemProxyTakeoverState::ManagedIneffective,
+                                        |el| {
+                                            el.child(
+                                                Button::new("dash-proxy-reapply")
+                                                    .xsmall()
+                                                    .primary()
+                                                    .label("重新生效")
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.reapply_system_proxy();
+                                                        cx.notify();
+                                                    })),
+                                            )
+                                        },
+                                    ),
+                            ),
+                    )
+                    // TUN Mode Card (uniform 2-row layout)
+                    .child(
+                        card(cx)
+                            .flex_1()
+                            .min_w_0()
+                            .v_flex()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .h(px(24.))
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .min_w_0()
+                                            .child(
+                                                Icon::new(IconName::ShieldCheck)
+                                                    .size_4()
+                                                    .text_color(theme.success),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_semibold()
+                                                    .whitespace_nowrap()
+                                                    .child("TUN 模式"),
+                                            )
+                                            .child(pill_badge(
+                                                if tun_active { "已启用" } else { "未启用" },
+                                                if tun_active {
+                                                    theme.success
+                                                } else {
+                                                    theme.muted_foreground
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        Switch::new("dash-tun-mode")
+                                            .checked(self.settings.tun_enabled)
+                                            .on_change(cx.listener(|this, checked, _, cx| {
+                                                this.toggle_tun_mode(*checked);
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .h(px(22.))
+                                    .items_center()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(tun_sub),
+                            ),
+                    )
+                    // Resident Mode Card (uniform 2-row layout; controls close-to-tray + auto-start)
+                    .child(
+                        card(cx)
+                            .flex_1()
+                            .min_w_0()
+                            .v_flex()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .h(px(24.))
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .min_w_0()
+                                            .child(
+                                                Icon::new(IconName::Pin)
+                                                    .size_4()
+                                                    .text_color(theme.info),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_semibold()
+                                                    .whitespace_nowrap()
+                                                    .child("常驻模式"),
+                                            )
+                                            .child(pill_badge(
+                                                if self.settings.resident_mode {
+                                                    "已开启"
+                                                } else {
+                                                    "未开启"
+                                                },
+                                                if self.settings.resident_mode {
+                                                    theme.info
+                                                } else {
+                                                    theme.muted_foreground
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        Switch::new("dash-resident-mode")
+                                            .checked(self.settings.resident_mode)
+                                            .on_change(cx.listener(|this, checked, _, cx| {
+                                                this.toggle_resident_mode(*checked);
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .h(px(22.))
+                                    .items_center()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(if self.settings.resident_mode {
+                                        "托盘常驻 · 关闭最小化 · 开机自启"
+                                    } else {
+                                        "关闭窗口直接退出 · 不随开机自启"
+                                    }),
+                            ),
+                    ),
+            )
+            // 3. Proxy Mode & Live Stats Row
+            .child(
+                div()
+                    .h_flex()
+                    .w_full()
+                    .gap_3()
+                    .flex_wrap()
+                    .child(
+                        card(cx)
+                            .flex_1()
+                            .min_w(px(300.))
+                            .v_flex()
+                            .gap_3()
+                            .child(section_header("代理模式", "通过 PATCH /configs 实时切换分流模式", cx))
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .gap_2()
+                                    .children(
+                                        [
+                                            ("rule", "规则 Rule", IconName::GitBranch),
+                                            ("global", "全局 Global", IconName::Globe),
+                                            ("direct", "直连 Direct", IconName::ArrowRight),
+                                        ]
+                                        .into_iter()
+                                        .map(|(mode_key, label, icon)| {
+                                            let active = current_mode == mode_key;
+                                            let mut btn = Button::new(SharedString::from(format!(
+                                                "mode-{mode_key}"
+                                            )))
+                                            .small()
+                                            .icon(icon)
+                                            .label(label)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.set_proxy_mode(mode_key);
+                                                cx.notify();
+                                            }));
+                                            if active {
+                                                btn = btn.primary();
+                                            }
+                                            btn
+                                        }),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        card(cx)
+                            .flex_1()
+                            .min_w(px(300.))
+                            .v_flex()
+                            .gap_2()
+                            .child(section_header("运行统计", "来自 Mihomo 实时统计与内存监控", cx))
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .justify_between()
+                                    .pt_1()
+                                    .child(stat_cell("活跃连接", format!("{active_conns}"), theme.primary, cx))
+                                    .child(stat_cell("累计下载", format_bytes(total_down), theme.success, cx))
+                                    .child(stat_cell("累计上传", format_bytes(total_up), theme.info, cx))
+                                    .child(stat_cell("核心内存", format_bytes(mem_inuse), theme.warning, cx)),
+                            ),
+                    ),
+            )
+            // 4. Live Traffic Sparkline Card
+            .child(
+                card(cx)
+                    .v_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(section_header(
+                                "实时速率曲线",
+                                "WebSocket /traffic 最近 60 秒上传与下载趋势",
+                                cx,
+                            ))
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .gap_4()
+                                    .text_sm()
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .text_color(theme.success)
+                                            .font_semibold()
+                                            .child(format!("↓ {}", format_speed(down))),
+                                    )
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .text_color(theme.info)
+                                            .font_semibold()
+                                            .child(format!("↑ {}", format_speed(up))),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_end()
+                            .gap(px(2.))
+                            .h(px(88.))
+                            .w_full()
+                            .p_2()
+                            .rounded_md()
+                            .bg(theme.background.opacity(0.6))
+                            .border_1()
+                            .border_color(theme.border)
+                            .children((0..60usize).map(|idx| {
+                                let offset = 60usize.saturating_sub(history.len());
+                                let pt = if idx >= offset {
+                                    history.get(idx - offset).copied().unwrap_or_default()
+                                } else {
+                                    Default::default()
+                                };
+                                let down_h = ((pt.down as f32 / max_speed as f32) * 68.0)
+                                    .clamp(2.0, 68.0);
+                                let up_h = ((pt.up as f32 / max_speed as f32) * 68.0)
+                                    .clamp(1.0, 68.0);
+                                div()
+                                    .flex_1()
+                                    .h_full()
+                                    .h_flex()
+                                    .items_end()
+                                    .gap(px(1.))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .h(px(down_h))
+                                            .rounded_t(px(2.))
+                                            .bg(theme.success.opacity(0.75)),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .h(px(up_h))
+                                            .rounded_t(px(2.))
+                                            .bg(theme.info.opacity(0.75)),
+                                    )
+                            })),
+                    ),
+            )
+            // 5. Active Profile Summary Card
+            .child(
+                card(cx)
+                    .h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_1()
+                            .child(section_header(
+                                format!(
+                                    "当前配置: {}",
+                                    active_profile
+                                        .map(|p| p.name.as_str())
+                                        .unwrap_or("直接读取服务配置文件")
+                                ),
+                                self.settings.active_config_path.clone(),
+                                cx,
+                            ))
+                            .when_some(
+                                active_profile.and_then(|p| p.subscription_info.as_ref()),
+                                |el, sub| {
+                                    el.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(format!(
+                                                "已用流量: {} / {} ({:.1}%)",
+                                                format_bytes(sub.used()),
+                                                format_bytes(sub.total),
+                                                sub.usage_ratio() * 100.0
+                                            )),
+                                    )
+                                },
+                            ),
+                    )
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("goto-proxies")
+                                    .small()
+                                    .icon(IconName::Globe)
+                                    .label("切换节点")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.page = AppPage::Proxies;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("goto-profiles")
+                                    .small()
+                                    .icon(IconName::FileCode)
+                                    .label("管理配置")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.page = AppPage::Profiles;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+    }
+
+    pub fn render_proxies_page(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let groups = self.sorted_proxy_groups();
+        let active_group_name = self
+            .selected_group
+            .clone()
+            .filter(|g| groups.contains(g))
+            .or_else(|| groups.first().cloned());
+
+        let search_kw = self.proxy_search_input.read(cx).value().to_lowercase();
+
+        let active_group = active_group_name
+            .as_ref()
+            .and_then(|name| self.proxies.get(name));
+
+        let mut node_names: Vec<String> = active_group
+            .and_then(|g| g.all.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|n| search_kw.is_empty() || n.to_lowercase().contains(&search_kw))
+            .collect();
+
+        match self.proxy_sort {
+            ProxySort::Default => {}
+            ProxySort::NameAsc => node_names.sort(),
+            ProxySort::LatencyAsc => {
+                node_names.sort_by_key(|n| {
+                    let d = self
+                        .proxy_delays
+                        .get(n)
+                        .copied()
+                        .or_else(|| self.proxies.get(n).and_then(|p| p.latest_delay()));
+                    match d {
+                        Some(0) | None => u32::MAX,
+                        Some(ms) => ms,
+                    }
+                });
+            }
+        }
+
+        div()
+            .v_flex()
+            .size_full()
+            .gap_3()
+            // Top Controls
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .flex_wrap()
+                    .child(
+                        div()
+                            .w(px(280.))
+                            .child(Input::new(&self.proxy_search_input).cleanable(true).small()),
+                    )
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .gap_1p5()
+                            .children(
+                                [
+                                    (ProxySort::Default, "默认顺序"),
+                                    (ProxySort::LatencyAsc, "延迟升序"),
+                                    (ProxySort::NameAsc, "名称排序"),
+                                ]
+                                .into_iter()
+                                .map(|(sort, lbl)| {
+                                    let mut b = Button::new(SharedString::from(format!("sort-{sort:?}")))
+                                        .xsmall()
+                                        .label(lbl)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.proxy_sort = sort;
+                                            cx.notify();
+                                        }));
+                                    if self.proxy_sort == sort {
+                                        b = b.primary();
+                                    }
+                                    b
+                                }),
+                            )
+                            .child(
+                                Button::new("proxies-refresh")
+                                    .xsmall()
+                                    .icon(IconName::RefreshCw)
+                                    .label("刷新")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.trigger_full_refresh();
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            // Group Tabs Strip
+            .child(
+                div()
+                    .h_flex()
+                    .flex_wrap()
+                    .gap_1p5()
+                    .children(groups.iter().map(|gname| {
+                        let is_sel = active_group_name.as_deref() == Some(gname.as_str());
+                        let now_label = self
+                            .proxies
+                            .get(gname)
+                            .and_then(|g| g.now.clone())
+                            .unwrap_or_default();
+                        let gname_owned = gname.clone();
+                        div()
+                            .id(SharedString::from(format!("grp-tab-{gname}")))
+                            .h_flex()
+                            .items_center()
+                            .gap_1p5()
+                            .px_3()
+                            .py_1p5()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .border_1()
+                            .text_xs()
+                            .when(is_sel, |el| {
+                                el.bg(theme.primary.opacity(0.16))
+                                    .border_color(theme.primary)
+                                    .text_color(theme.primary)
+                                    .font_semibold()
+                            })
+                            .when(!is_sel, |el| {
+                                el.bg(theme.secondary.opacity(0.4))
+                                    .border_color(theme.border)
+                                    .text_color(theme.foreground)
+                                    .hover(|s| s.bg(theme.list_hover))
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.selected_group = Some(gname_owned.clone());
+                                cx.notify();
+                            }))
+                            .child(gname.clone())
+                            .when(!now_label.is_empty(), |el| {
+                                el.child(
+                                    div()
+                                        .text_color(theme.muted_foreground)
+                                        .max_w(px(110.))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(format!("· {now_label}")),
+                                )
+                            })
+                    })),
+            )
+            // Active Group Header & Node Grid
+            .child(if let Some(group) = active_group {
+                let gname = group.name.clone();
+                let gtype = group.proxy_type.clone();
+                let current_now = group.now.clone().unwrap_or_default();
+                let can_select = gtype == "Selector" || gtype == "URLTest" || gtype == "Fallback";
+                let can_unfix = gtype == "URLTest" || gtype == "Fallback";
+
+                div()
+                    .v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .gap_3()
+                    .child(
+                        card(cx)
+                            .h_flex()
+                            .items_center()
+                            .justify_between()
+                            .py_2p5()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_semibold()
+                                            .child(gname.clone()),
+                                    )
+                                    .child(pill_badge(gtype.clone(), theme.info))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(format!(
+                                                "当前: {}  ({} 个节点)",
+                                                current_now,
+                                                node_names.len()
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .gap_2()
+                                    .when(can_unfix, |el| {
+                                        let g_unfix = gname.clone();
+                                        el.child(
+                                            Button::new("unfix-group")
+                                                .xsmall()
+                                                .label("恢复自动")
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.unfix_proxy_group(g_unfix.clone());
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    })
+                                    .child({
+                                        let g_test = gname.clone();
+                                        Button::new("test-group-delay")
+                                            .primary()
+                                            .xsmall()
+                                            .icon(IconName::Zap)
+                                            .label("全组测速")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.test_group_delay(g_test.clone());
+                                                cx.notify();
+                                            }))
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("proxies-grid-scroll")
+                            .flex_1()
+                            .min_h_0()
+                            .pr_2()
+                            .overflow_y_scrollbar()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .flex_wrap()
+                                    .gap_2p5()
+                                    .children(node_names.into_iter().enumerate().map(|(i, node)| {
+                                        let is_current = node == current_now;
+                                        let item = self.proxies.get(&node);
+                                        let proto = item
+                                            .map(|p| p.proxy_type.clone())
+                                            .unwrap_or_else(|| "Proxy".to_string());
+                                        let udp = item.is_some_and(|p| p.udp);
+                                        let delay = self
+                                            .proxy_delays
+                                            .get(&node)
+                                            .copied()
+                                            .or_else(|| item.and_then(|p| p.latest_delay()));
+                                        let d_color = delay_color(delay, cx);
+                                        let d_text = delay_text(delay);
+                                        let g_click = gname.clone();
+                                        let n_click = node.clone();
+                                        let n_test = node.clone();
+
+                                        div()
+                                            .id(SharedString::from(format!("node-{i}-{node}")))
+                                            .v_flex()
+                                            .justify_between()
+                                            .w(px(236.))
+                                            .min_h(px(74.))
+                                            .p_3()
+                                            .rounded_lg()
+                                            .border_1()
+                                            .cursor_pointer()
+                                            .when(is_current, |el| {
+                                                el.bg(theme.primary.opacity(0.14))
+                                                    .border_color(theme.primary)
+                                            })
+                                            .when(!is_current, |el| {
+                                                el.bg(theme.secondary.opacity(0.45))
+                                                    .border_color(theme.border)
+                                                    .hover(|s| s.bg(theme.list_hover))
+                                            })
+                                            .when(can_select, |el| {
+                                                el.on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.select_proxy(
+                                                        g_click.clone(),
+                                                        n_click.clone(),
+                                                    );
+                                                    cx.notify();
+                                                }))
+                                            })
+                                            .child(
+                                                div()
+                                                    .h_flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .font_semibold()
+                                                            .overflow_hidden()
+                                                            .whitespace_nowrap()
+                                                            .text_color(if is_current {
+                                                                theme.primary
+                                                            } else {
+                                                                theme.foreground
+                                                            })
+                                                            .child(node.clone()),
+                                                    )
+                                                    .when(is_current, |el| {
+                                                        el.child(
+                                                            Icon::new(IconName::Check)
+                                                                .size_3p5()
+                                                                .text_color(theme.primary),
+                                                        )
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h_flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .pt_2()
+                                                    .child(
+                                                        div()
+                                                            .h_flex()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .text_xs()
+                                                            .text_color(theme.muted_foreground)
+                                                            .child(proto)
+                                                            .when(udp, |el| {
+                                                                el.child(
+                                                                    div()
+                                                                        .px_1()
+                                                                        .rounded_sm()
+                                                                        .bg(theme.muted)
+                                                                        .text_xs()
+                                                                        .child("UDP"),
+                                                                )
+                                                            }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .id(SharedString::from(format!(
+                                                                "delay-{i}-{node}"
+                                                            )))
+                                                            .px_1p5()
+                                                            .py(px(1.))
+                                                            .rounded_sm()
+                                                            .bg(d_color.opacity(0.14))
+                                                            .text_xs()
+                                                            .font_semibold()
+                                                            .text_color(d_color)
+                                                            .cursor_pointer()
+                                                            .on_click(cx.listener(
+                                                                move |this, _, _, cx| {
+                                                                    cx.stop_propagation();
+                                                                    this.test_single_proxy_delay(
+                                                                        n_test.clone(),
+                                                                    );
+                                                                    cx.notify();
+                                                                },
+                                                            ))
+                                                            .child(d_text),
+                                                    ),
+                                            )
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
+            } else {
+                card(cx)
+                    .h_flex()
+                    .items_center()
+                    .justify_center()
+                    .h(px(180.))
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("暂无策略组数据，请确认 Mihomo 服务已运行且外部控制器连接正常。")
+                    .into_any_element()
+            })
+    }
+}
+
+fn stat_cell(label: &str, value: String, color: Hsla, cx: &App) -> Div {
+    let theme = cx.theme();
+    div()
+        .v_flex()
+        .gap_0p5()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(label.to_string()),
+        )
+        .child(div().text_base().font_bold().text_color(color).child(value))
+}

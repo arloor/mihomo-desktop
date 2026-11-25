@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0D1B42"/>
+      <stop offset="52%" stop-color="#1C52E0"/>
+      <stop offset="100%" stop-color="#06BCDC"/>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="50%" cy="36%" r="48%">
+      <stop offset="0%" stop-color="#7DD3FC" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E0F4FF"/>
+    </linearGradient>
+    <linearGradient id="diamondGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#6EF5C3"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </linearGradient>
+    <filter id="dropShadow" x="-15%" y="-15%" width="130%" height="135%">
+      <feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#061230" flood-opacity="0.48"/>
+    </filter>
+  </defs>
+  <rect x="46" y="46" width="932" height="932" rx="220" ry="220" fill="url(#bgGrad)"/>
+  <rect x="46" y="46" width="932" height="932" rx="220" ry="220" fill="url(#centerGlow)"/>
+  <rect x="52" y="52" width="920" height="920" rx="214" ry="214" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="10"/>
+  <polygon points="512,152 802,246 786,578 512,872 238,578 222,246" fill="#FFFFFF" fill-opacity="0.06" stroke="#BAE6FD" stroke-opacity="0.2" stroke-width="7"/>
+  <g filter="url(#dropShadow)">
+    <polygon points="232,272 350,272 512,476 674,272 792,272 792,748 676,748 676,444 512,646 348,444 348,748 232,748" fill="url(#mGrad)"/>
+    <polygon points="512,682 574,744 512,806 450,744" fill="url(#diamondGrad)"/>
+  </g>
+</svg>

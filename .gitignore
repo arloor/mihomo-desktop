@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target/
+
+# Installer staging, output binaries, and downloaded third-party assets
+/dist/
+/installer/geo/
+/installer/*.exe
+
+# Debug symbols & backups
+*.pdb
+*.bak
+
+# OS / Editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
