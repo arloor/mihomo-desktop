@@ -1,6 +1,8 @@
 param(
     [string]$CorePath = "",
     [string]$GitHubMirror = "",
+    [string]$Version = "",
+    [switch]$DownloadCore,
     [switch]$SkipBuild,
     [switch]$RefreshGeo
 )
@@ -8,6 +10,19 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
+
+if (-not $Version) {
+    $cargoToml = Get-Content (Join-Path $RepoRoot "Cargo.toml") -Raw
+    if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"') {
+        $Version = $Matches[1]
+    } else {
+        $Version = "0.1.0"
+    }
+}
+$Version = $Version.TrimStart('v')
+Write-Host "==> Target version: $Version" -ForegroundColor Cyan
+
+$MirrorPrefix = if ($GitHubMirror) { $GitHubMirror.TrimEnd('/') + '/' } else { "" }
 
 Write-Host "==> 1. Building mihomo-desktop (release)..." -ForegroundColor Cyan
 if (-not $SkipBuild) {
@@ -37,15 +52,53 @@ foreach ($c in $Candidates) {
         break
     }
 }
+
+if (-not $ResolvedCore -and $DownloadCore) {
+    Write-Host "    Downloading latest MetaCubeX/mihomo Windows amd64 release..." -ForegroundColor Yellow
+    $headers = @{ "User-Agent" = "mihomo-desktop-builder" }
+    if ($env:GITHUB_TOKEN) {
+        $headers["Authorization"] = "Bearer $($env:GITHUB_TOKEN)"
+    }
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" -Headers $headers
+    $asset = $release.assets | Where-Object { $_.name -match '^mihomo-windows-amd64-v2-v[0-9].*\.zip$' } | Select-Object -First 1
+    if (-not $asset) {
+        $asset = $release.assets | Where-Object { $_.name -match '^mihomo-windows-amd64-compatible-v[0-9].*\.zip$' } | Select-Object -First 1
+    }
+    if (-not $asset) {
+        $asset = $release.assets | Where-Object { $_.name -match '^mihomo-windows-amd64-v[0-9].*\.zip$' } | Select-Object -First 1
+    }
+    if (-not $asset) {
+        throw "Could not find a suitable Windows amd64 zip asset in MetaCubeX/mihomo latest release ($($release.tag_name))"
+    }
+
+    $dlUrl = "${MirrorPrefix}$($asset.browser_download_url)"
+    $tmpZip = Join-Path $env:TEMP "mihomo-core-$($release.tag_name).zip"
+    $tmpExtract = Join-Path $env:TEMP "mihomo-core-extract-$([guid]::NewGuid().ToString('N'))"
+    Write-Host "    Fetching $($asset.name) from $dlUrl ..." -ForegroundColor Yellow
+    curl.exe -fsSL --retry 3 --connect-timeout 20 -o $tmpZip $dlUrl
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmpZip)) {
+        throw "Failed to download mihomo core archive from $dlUrl"
+    }
+    Expand-Archive -Path $tmpZip -DestinationPath $tmpExtract -Force
+    $extractedExe = Get-ChildItem -Path $tmpExtract -Recurse -Filter "*.exe" | Select-Object -First 1
+    if (-not $extractedExe) {
+        throw "No .exe found inside downloaded mihomo archive"
+    }
+    $targetCore = Join-Path $RepoRoot "installer\mihomo.exe"
+    Copy-Item -Force $extractedExe.FullName $targetCore
+    Remove-Item -Force $tmpZip -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $tmpExtract -ErrorAction SilentlyContinue
+    $ResolvedCore = (Resolve-Path $targetCore).Path
+}
+
 if (-not $ResolvedCore) {
-    throw "mihomo.exe not found. Pass -CorePath <path-to-mihomo.exe> or place it in installer\mihomo.exe"
+    throw "mihomo.exe not found. Pass -CorePath <path-to-mihomo.exe>, place it in installer\mihomo.exe, or pass -DownloadCore"
 }
 Write-Host "    Using core: $ResolvedCore" -ForegroundColor Green
 
 Write-Host "==> 3. Ensuring bundled GEO / MMDB / ASN databases..." -ForegroundColor Cyan
 $GeoCacheDir = Join-Path $RepoRoot "installer\geo"
 New-Item -ItemType Directory -Force -Path $GeoCacheDir | Out-Null
-$MirrorPrefix = if ($GitHubMirror) { $GitHubMirror.TrimEnd('/') + '/' } else { "" }
 $GeoAssets = @(
     @{ Name = "GeoIP.dat";    Url = "${MirrorPrefix}https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat" },
     @{ Name = "GeoSite.dat";  Url = "${MirrorPrefix}https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat" },
@@ -97,6 +150,11 @@ echo Service uninstalled.
 pause
 '@ | Set-Content -Encoding ASCII (Join-Path $StageDir "Uninstall.cmd")
 
+$PortableZip = Join-Path $RepoRoot "dist\MihomoDesktop-$Version-x64-portable.zip"
+if (Test-Path $PortableZip) { Remove-Item -Force $PortableZip }
+Compress-Archive -Path (Join-Path $StageDir "*") -DestinationPath $PortableZip -CompressionLevel Optimal
+Write-Host "    Portable archive ready: $PortableZip" -ForegroundColor Green
+
 Write-Host "==> 5. Looking for Inno Setup 6 (ISCC.exe)..." -ForegroundColor Cyan
 $Iscc = $null
 $IsccCmd = Get-Command iscc -ErrorAction SilentlyContinue
@@ -113,8 +171,8 @@ if ($IsccCmd) {
 }
 
 if ($Iscc) {
-    Write-Host "    Compiling Inno Setup installer with $Iscc ..." -ForegroundColor Green
-    & $Iscc (Join-Path $RepoRoot "installer\mihomo-desktop.iss")
+    Write-Host "    Compiling Inno Setup installer (v$Version) with $Iscc ..." -ForegroundColor Green
+    & $Iscc "/DMyAppVersion=$Version" (Join-Path $RepoRoot "installer\mihomo-desktop.iss")
     if ($LASTEXITCODE -ne 0) {
         throw "ISCC compilation failed"
     }

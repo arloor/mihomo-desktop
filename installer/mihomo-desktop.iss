@@ -3,7 +3,9 @@
 ; Or manually: iscc installer\mihomo-desktop.iss
 
 #define MyAppName "Mihomo Desktop"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "Mihomo Desktop"
 #define MyAppExeName "mihomo-desktop.exe"
 #define MyServiceName "mihomo"
