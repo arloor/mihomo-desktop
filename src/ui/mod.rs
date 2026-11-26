@@ -135,19 +135,21 @@ pub fn delay_text(delay: Option<u32>) -> String {
     }
 }
 
+pub fn section_title(title: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .text_base()
+        .font_semibold()
+        .text_color(cx.theme().foreground)
+        .child(title.into())
+}
+
 /// Section header with title and optional subtitle.
 pub fn section_header(title: impl Into<SharedString>, subtitle: impl Into<SharedString>, cx: &App) -> Div {
     let theme = cx.theme();
     div()
         .v_flex()
         .gap_0p5()
-        .child(
-            div()
-                .text_base()
-                .font_semibold()
-                .text_color(theme.foreground)
-                .child(title.into()),
-        )
+        .child(section_title(title, cx))
         .child(
             div()
                 .text_xs()

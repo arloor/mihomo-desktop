@@ -1,7 +1,7 @@
 use crate::config::format_bytes;
 use crate::system::core_manager::short_variant_name;
 use crate::ui::app::MihomoApp;
-use crate::ui::{ConnSort, card, pill_badge, section_header};
+use crate::ui::{ConnSort, card, pill_badge, section_header, section_title};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -36,13 +36,13 @@ impl MihomoApp {
                         .iter()
                         .any(|ch| ch.to_lowercase().contains(&search))
             })
-            .cloned()
+            .map(|conn| (conn, chrono::DateTime::parse_from_rfc3339(&conn.start).ok()))
             .collect();
 
         match self.conn_sort {
-            ConnSort::Newest => list.sort_by(|a, b| b.start.cmp(&a.start)),
-            ConnSort::DownloadDesc => list.sort_by(|a, b| b.download.cmp(&a.download)),
-            ConnSort::UploadDesc => list.sort_by(|a, b| b.upload.cmp(&a.upload)),
+            ConnSort::Newest => list.sort_by_key(|(conn, start)| (std::cmp::Reverse(*start), &conn.id)),
+            ConnSort::DownloadDesc => list.sort_by_key(|(conn, _)| std::cmp::Reverse(conn.download)),
+            ConnSort::UploadDesc => list.sort_by_key(|(conn, _)| std::cmp::Reverse(conn.upload)),
         }
 
         let shown_count = list.len().min(150);
@@ -146,9 +146,9 @@ impl MihomoApp {
                             .gap_1p5()
                             .children(
                                 [
+                                    (ConnSort::Newest, "最新优先"),
                                     (ConnSort::DownloadDesc, "按下载"),
                                     (ConnSort::UploadDesc, "按上传"),
-                                    (ConnSort::Newest, "按时间"),
                                 ]
                                 .into_iter()
                                 .map(|(s, lbl)| {
@@ -187,7 +187,11 @@ impl MihomoApp {
                                         .child("当前没有匹配的活跃连接"),
                                 )
                             })
-                            .children(list.into_iter().take(shown_count).map(|conn| {
+                            .children(list.into_iter().take(shown_count).map(|(conn, start)| {
+                                let started = start.map_or_else(
+                                    || "时间未知".to_string(),
+                                    |time| time.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S 建立").to_string(),
+                                );
                                 let cid = conn.id.clone();
                                 let net = conn.metadata.network.to_uppercase();
                                 let net_color = if net == "UDP" {
@@ -253,7 +257,7 @@ impl MihomoApp {
                                                     .overflow_hidden()
                                                     .whitespace_nowrap()
                                                     .child(format!(
-                                                        "链路: {}  ·  规则: {}  ·  来源: {}:{}",
+                                                        "{started}  ·  链路: {}  ·  规则: {}  ·  来源: {}:{}",
                                                         chain,
                                                         rule_str,
                                                         conn.metadata.source_ip,
@@ -387,7 +391,7 @@ impl MihomoApp {
                     .gap_3()
                     .child(section_header(
                         format!("本地已下载核心 ({})", self.local_cores.len()),
-                        "切换版本时将自动执行：停止 Windows 服务 → 备份并替换 mihomo.exe → 启动服务",
+                        "切换核心会重启服务。",
                         cx,
                     ))
                     .when(self.local_cores.is_empty(), |el| {
@@ -479,11 +483,7 @@ impl MihomoApp {
                             .justify_between()
                             .flex_wrap()
                             .gap_2()
-                            .child(section_header(
-                                "GitHub Release 列表 (MetaCubeX/mihomo)",
-                                "拉取官方发布列表并选择适合本机架构的 Windows 构建包下载",
-                                cx,
-                            ))
+                            .child(section_title("可下载版本", cx))
                             .child(
                                 div()
                                     .h_flex()
@@ -528,7 +528,7 @@ impl MihomoApp {
                                 .py_4()
                                 .text_xs()
                                 .text_color(theme.muted_foreground)
-                                .child("点击右上角「拉取 Release 列表」从 GitHub 获取最新 Mihomo 核心版本。"),
+                                .child("暂无版本列表"),
                         )
                     })
                     .children(self.github_releases.iter().map(|rel| {

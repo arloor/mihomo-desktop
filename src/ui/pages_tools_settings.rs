@@ -1,6 +1,6 @@
 use crate::config;
 use crate::ui::app::MihomoApp;
-use crate::ui::{ToolsTab, card, pill_badge, section_header};
+use crate::ui::{ToolsTab, card, pill_badge, section_header, section_title};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -217,11 +217,7 @@ impl MihomoApp {
                 card(cx)
                     .v_flex()
                     .gap_3()
-                    .child(section_header(
-                        "Mihomo 核心管理接口",
-                        "直接调用 Mihomo REST API 执行配置热重载、缓存清理、GEO 更新与升级操作",
-                        cx,
-                    ))
+                    .child(section_title("核心操作", cx))
                     .child(
                         div()
                             .h_flex()
@@ -256,11 +252,7 @@ impl MihomoApp {
                 card(cx)
                     .v_flex()
                     .gap_3()
-                    .child(section_header(
-                        "运行时参数实时调节 (PATCH /configs)",
-                        "修改后立即通过 Mihomo API 生效，无需重启服务",
-                        cx,
-                    ))
+                    .child(section_header("运行参数", "修改后立即生效。", cx))
                     .child(
                         div()
                             .h_flex()
@@ -399,11 +391,7 @@ impl MihomoApp {
                 card(cx)
                     .v_flex()
                     .gap_3()
-                    .child(section_header(
-                        "Mihomo DNS 查询测试",
-                        "调用 GET /dns/query 验证当前 FakeIP / 国内外分流 DNS 解析结果",
-                        cx,
-                    ))
+                    .child(section_title("DNS 查询", cx))
                     .child(
                         div()
                             .h_flex()
@@ -526,11 +514,7 @@ impl MihomoApp {
                             .justify_between()
                             .flex_wrap()
                             .gap_2()
-                            .child(section_header(
-                                "Windows 服务配置",
-                                "桌面应用通过内置 --service 宿主及 Windows SCM 管理服务生命周期",
-                                cx,
-                            ))
+                            .child(section_title("Windows 服务配置", cx))
                             .child(
                                 div()
                                     .h_flex()
@@ -579,11 +563,7 @@ impl MihomoApp {
                 card(cx)
                     .v_flex()
                     .gap_3()
-                    .child(section_header(
-                        "外观与主题",
-                        "默认使用明亮模式，也可随时点击右上角太阳/月亮图标快速切换",
-                        cx,
-                    ))
+                    .child(section_title("主题", cx))
                     .child(
                         Switch::new("setting-dark-mode")
                             .checked(self.settings.dark_mode)
@@ -605,11 +585,7 @@ impl MihomoApp {
                     .items_center()
                     .justify_between()
                     .gap_4()
-                    .child(section_header(
-                        "常驻模式",
-                        "开启后启用系统托盘（关闭窗口最小化到托盘）并自动随 Windows 登录静默开机自启；关闭后退出即结束进程并取消开机自启",
-                        cx,
-                    ))
+                    .child(section_header("常驻模式", "登录 Windows 时启动，关闭窗口时收至托盘。", cx))
                     .child(
                         Switch::new("setting-resident-mode")
                             .checked(self.settings.resident_mode)
@@ -624,11 +600,7 @@ impl MihomoApp {
                 card(cx)
                     .v_flex()
                     .gap_3()
-                    .child(section_header(
-                        "Mihomo 控制器与系统代理",
-                        "用于连接 Mihomo External Controller REST/WS 接口及配置 Windows 系统代理",
-                        cx,
-                    ))
+                    .child(section_title("控制器与系统代理", cx))
                     .child(labeled_input("外部控制器地址 (external-controller)", &self.setting_controller_addr, cx))
                     .child(labeled_input("访问密钥 (secret)", &self.setting_controller_secret, cx))
                     .child(labeled_input("混合代理端口 (mixed-port)", &self.setting_mixed_port, cx))

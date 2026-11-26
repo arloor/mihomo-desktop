@@ -2,14 +2,14 @@ use crate::config::{format_bytes, format_speed};
 use crate::system::proxy::SystemProxyTakeoverState;
 use crate::system::service::ServiceState;
 use crate::ui::app::MihomoApp;
-use crate::ui::{AppPage, ProxySort, card, delay_color, delay_text, pill_badge, section_header};
+use crate::ui::{AppPage, ProxySort, card, delay_color, delay_text, pill_badge, section_header, section_title};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -33,7 +33,7 @@ impl MihomoApp {
             .mihomo_config
             .as_ref()
             .map(|c| c.mode.to_ascii_lowercase())
-            .unwrap_or_else(|| "rule".to_string());
+            .unwrap_or_default();
 
         let (up, down, mem_inuse, history) = {
             let t = self.telemetry.lock().unwrap();
@@ -85,14 +85,11 @@ impl MihomoApp {
 
         let tun_info = self.mihomo_config.as_ref().and_then(|c| c.tun.as_ref());
         let tun_active = tun_info.is_some_and(|t| t.enable);
-        let tun_sub = match tun_info {
-            Some(t) if t.enable => format!(
+        let tun_sub = tun_info.filter(|t| t.enable).map(|t| format!(
                 "{} · {}",
                 if t.device.is_empty() { "Mihomo" } else { &t.device },
                 if t.stack.is_empty() { "system" } else { &t.stack }
-            ),
-            _ => "开启时缺失则注入默认 TUN/DNS".to_string(),
-        };
+            ));
 
         let max_speed = history
             .iter()
@@ -159,13 +156,9 @@ impl MihomoApp {
                                             .text_xs()
                                             .text_color(theme.muted_foreground)
                                             .child(format!(
-                                                "启动类型: {}  |  控制器: http://{}  |  核心版本: {}",
+                                                "启动类型：{}　控制器：http://{}",
                                                 self.service_status.start_type,
-                                                self.settings.controller_addr,
-                                                self.version
-                                                    .as_ref()
-                                                    .map(|v| v.version.as_str())
-                                                    .unwrap_or("未连接")
+                                                self.settings.controller_addr
                                             )),
                                     ),
                             )
@@ -174,20 +167,20 @@ impl MihomoApp {
                                     .h_flex()
                                     .items_center()
                                     .gap_2()
-                                    .when(svc_not_installed, |el| {
+                                    .when(svc_not_installed && !core_missing, |el| {
                                         el.child(
                                             Button::new("svc-install-now")
                                                 .primary()
                                                 .small()
                                                 .icon(IconName::Wrench)
-                                                .label("一键安装并启动服务")
+                                                .label("安装并启动")
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.install_windows_service();
                                                     cx.notify();
                                                 })),
                                         )
                                     })
-                                    .when(!svc_not_installed, |el| {
+                                    .when(self.service_status.state == ServiceState::Stopped && !core_missing, |el| {
                                         el.child(
                                             Button::new("svc-start")
                                                 .primary()
@@ -199,7 +192,9 @@ impl MihomoApp {
                                                     cx.notify();
                                                 })),
                                         )
-                                        .child(
+                                    })
+                                    .when(svc_running || self.service_status.state == ServiceState::Paused, |el| {
+                                        el.child(
                                             Button::new("svc-restart")
                                                 .small()
                                                 .icon(IconName::RotateCw)
@@ -239,11 +234,11 @@ impl MihomoApp {
                                 .text_xs()
                                 .text_color(theme.info)
                                 .child(if svc_not_installed && core_missing {
-                                    "检测到本机尚未安装 Mihomo 服务且缺少核心文件：请先运行安装程序，或在「核心管理」下载核心后点击「一键安装并启动服务」。"
+                                    "请先下载核心，再安装服务。"
                                 } else if svc_not_installed {
-                                    "检测到本机尚未注册 Mihomo Windows 服务：点击「一键安装并启动服务」将自动创建初始配置、注册开机自启服务并授予普通用户免 UAC 启停权限。"
+                                    "安装服务需要管理员权限。"
                                 } else {
-                                    "检测到目标路径缺少 mihomo.exe：请前往「核心管理」下载或部署核心文件。"
+                                    "找不到核心文件 mihomo.exe。"
                                 })
                                 .when(core_missing, |inner| {
                                     inner.child(
@@ -429,17 +424,9 @@ impl MihomoApp {
                                             })),
                                     ),
                             )
-                            .child(
-                                div()
-                                    .h_flex()
-                                    .h(px(22.))
-                                    .items_center()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(tun_sub),
-                            ),
+                            .when_some(tun_sub, |el, detail| {
+                                el.child(div().text_xs().text_color(theme.muted_foreground).child(detail))
+                            }),
                     )
                     // Resident Mode Card (uniform 2-row layout; controls close-to-tray + auto-start)
                     .child(
@@ -473,19 +460,7 @@ impl MihomoApp {
                                                     .font_semibold()
                                                     .whitespace_nowrap()
                                                     .child("常驻模式"),
-                                            )
-                                            .child(pill_badge(
-                                                if self.settings.resident_mode {
-                                                    "已开启"
-                                                } else {
-                                                    "未开启"
-                                                },
-                                                if self.settings.resident_mode {
-                                                    theme.info
-                                                } else {
-                                                    theme.muted_foreground
-                                                },
-                                            )),
+                                            ),
                                     )
                                     .child(
                                         Switch::new("dash-resident-mode")
@@ -495,21 +470,6 @@ impl MihomoApp {
                                                 cx.notify();
                                             })),
                                     ),
-                            )
-                            .child(
-                                div()
-                                    .h_flex()
-                                    .h(px(22.))
-                                    .items_center()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(if self.settings.resident_mode {
-                                        "托盘常驻 · 关闭最小化 · 开机自启"
-                                    } else {
-                                        "关闭窗口直接退出 · 不随开机自启"
-                                    }),
                             ),
                     ),
             )
@@ -526,16 +486,16 @@ impl MihomoApp {
                             .min_w(px(300.))
                             .v_flex()
                             .gap_3()
-                            .child(section_header("代理模式", "通过 PATCH /configs 实时切换分流模式", cx))
+                            .child(section_title("代理模式", cx))
                             .child(
                                 div()
                                     .h_flex()
                                     .gap_2()
                                     .children(
                                         [
-                                            ("rule", "规则 Rule", IconName::GitBranch),
-                                            ("global", "全局 Global", IconName::Globe),
-                                            ("direct", "直连 Direct", IconName::ArrowRight),
+                                            ("rule", "规则", IconName::GitBranch),
+                                            ("global", "全局", IconName::Globe),
+                                            ("direct", "直连", IconName::ArrowRight),
                                         ]
                                         .into_iter()
                                         .map(|(mode_key, label, icon)| {
@@ -545,6 +505,7 @@ impl MihomoApp {
                                             )))
                                             .small()
                                             .icon(icon)
+                                            .disabled(!self.api_online)
                                             .label(label)
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.set_proxy_mode(mode_key);
@@ -564,7 +525,7 @@ impl MihomoApp {
                             .min_w(px(300.))
                             .v_flex()
                             .gap_2()
-                            .child(section_header("运行统计", "来自 Mihomo 实时统计与内存监控", cx))
+                            .child(section_title("运行统计", cx))
                             .child(
                                 div()
                                     .h_flex()
@@ -587,11 +548,7 @@ impl MihomoApp {
                             .h_flex()
                             .items_center()
                             .justify_between()
-                            .child(section_header(
-                                "实时速率曲线",
-                                "WebSocket /traffic 最近 60 秒上传与下载趋势",
-                                cx,
-                            ))
+                            .child(section_title("实时速率", cx))
                             .child(
                                 div()
                                     .h_flex()

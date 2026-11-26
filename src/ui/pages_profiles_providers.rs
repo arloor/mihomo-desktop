@@ -1,13 +1,13 @@
 use crate::config::{self, format_bytes};
 use crate::ui::app::MihomoApp;
-use crate::ui::{ProvidersTab, card, delay_color, delay_text, pill_badge, section_header};
+use crate::ui::{ProvidersTab, card, delay_color, delay_text, pill_badge, section_header, section_title};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -32,11 +32,7 @@ impl MihomoApp {
                 card(cx)
                     .v_flex()
                     .gap_3()
-                    .child(section_header(
-                        "通过 URL 导入 Mihomo 配置",
-                        "支持 Clash / Mihomo 订阅链接（自动解析 Subscription-Userinfo 流量信息）",
-                        cx,
-                    ))
+                    .child(section_title("导入配置", cx))
                     .child(
                         div()
                             .h_flex()
@@ -56,6 +52,7 @@ impl MihomoApp {
                             )
                             .child(
                                 Button::new("import-url-btn")
+                                    .disabled(self.profile_url_input.read(cx).value().trim().is_empty())
                                     .primary()
                                     .small()
                                     .icon(IconName::Download)
@@ -80,6 +77,7 @@ impl MihomoApp {
                             )
                             .child(
                                 Button::new("import-local-btn")
+                                    .disabled(self.local_import_input.read(cx).value().trim().is_empty())
                                     .small()
                                     .icon(IconName::FolderOpen)
                                     .label("导入本地 YAML")
@@ -108,11 +106,7 @@ impl MihomoApp {
                     .justify_between()
                     .flex_wrap()
                     .gap_3()
-                    .child(section_header(
-                        "默认基础配置 & TUN/DNS 自动补全策略",
-                        "导入配置缺失基础项（端口、sniffer、geox-url、profile、dns、tun 或空 rules）时自动合并默认值，用户已配置项优先保留",
-                        cx,
-                    ))
+                    .child(section_header("默认配置", "导入时自动补全缺失项。", cx))
                     .child(
                         div()
                             .h_flex()

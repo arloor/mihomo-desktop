@@ -261,6 +261,9 @@ impl MihomoApp {
             InputState::new(window, cx)
                 .placeholder(r"输入本地 YAML 文件路径，例如 C:\ProgramData\Mihomo\config\clash.yaml")
         });
+        for input in [&profile_url_input, &local_import_input] {
+            cx.observe(input, |_, _, cx| cx.notify()).detach();
+        }
         let proxy_search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索节点名称..."));
         let rule_search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索规则类型 / 域名 / 目标策略..."));
         let conn_search_input = cx.new(|cx| InputState::new(window, cx).placeholder("搜索域名、IP、进程、规则或链路..."));
@@ -337,7 +340,7 @@ impl MihomoApp {
             selected_group: None,
             proxy_sort: ProxySort::Default,
             providers_tab: ProvidersTab::ProxyProviders,
-            conn_sort: ConnSort::DownloadDesc,
+            conn_sort: ConnSort::Newest,
             connections_paused: false,
             tools_tab: ToolsTab::Logs,
             dns_record_type: "A".to_string(),
