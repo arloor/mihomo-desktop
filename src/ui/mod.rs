@@ -1,4 +1,5 @@
 pub mod app;
+pub mod flags;
 pub mod pages_connections_cores;
 pub mod pages_dashboard;
 pub mod pages_profiles_providers;

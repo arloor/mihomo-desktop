@@ -1,8 +1,12 @@
 use crate::config::{format_bytes, format_speed};
+use crate::geo::{GeoRegion, NodeGeoInfo};
 use crate::system::proxy::SystemProxyTakeoverState;
 use crate::system::service::ServiceState;
 use crate::ui::app::MihomoApp;
-use crate::ui::{AppPage, ProxySort, card, delay_color, delay_text, pill_badge, section_header, section_title};
+use crate::ui::flags;
+use crate::ui::{
+    AppPage, ProxySort, card, delay_color, delay_text, pill_badge, section_header, section_title,
+};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -688,10 +692,59 @@ impl MihomoApp {
 
     pub fn render_proxies_page(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
+        let is_dark = self.settings.dark_mode;
+
+        // Refined palette for proxy cards & controls (avoids dull gray and harsh black fills in Light mode)
+        let accent: Hsla = if is_dark {
+            rgb(0x60a5fa).into()
+        } else {
+            rgb(0x2563eb).into()
+        };
+        let accent_hover: Hsla = if is_dark {
+            rgb(0x3b82f6).into()
+        } else {
+            rgb(0x1d4ed8).into()
+        };
+        let card_bg: Hsla = if is_dark {
+            rgb(0x16161a).into()
+        } else {
+            rgb(0xffffff).into()
+        };
+        let card_hover_bg: Hsla = if is_dark {
+            rgb(0x1d1d23).into()
+        } else {
+            rgb(0xf8fafc).into()
+        };
+        let card_selected_bg: Hsla = if is_dark {
+            hsla(217.0 / 360.0, 0.85, 0.56, 0.14)
+        } else {
+            rgb(0xeff6ff).into()
+        };
+        let card_border: Hsla = if is_dark {
+            rgb(0x27272c).into()
+        } else {
+            rgb(0xe5e7eb).into()
+        };
+        let subtle_surface: Hsla = if is_dark {
+            rgb(0x141418).into()
+        } else {
+            rgb(0xf4f6f9).into()
+        };
+        let chip_bg: Hsla = if is_dark {
+            rgb(0x232329).into()
+        } else {
+            rgb(0xf1f5f9).into()
+        };
+        let white: Hsla = rgb(0xffffff).into();
+
+        // Responsive column count based on viewport width so cards fill 100% width with no dead margin
+        let avail_w = (f32::from(window.viewport_size().width) - 260.0).max(400.0);
+        let grid_cols = ((avail_w + 12.0) / 216.0).floor().clamp(2.0, 5.0) as u16;
+
         let groups = self.sorted_proxy_groups();
         let active_group_name = self
             .selected_group
@@ -709,7 +762,35 @@ impl MihomoApp {
             .and_then(|g| g.all.clone())
             .unwrap_or_default()
             .into_iter()
-            .filter(|n| search_kw.is_empty() || n.to_lowercase().contains(&search_kw))
+            .filter(|n| {
+                if search_kw.is_empty() {
+                    return true;
+                }
+                if n.to_lowercase().contains(&search_kw) {
+                    return true;
+                }
+                // Also allow searching by resolved country code or Chinese country name
+                if let Some(geo) = self.resolve_node_geo(n) {
+                    match &geo.region {
+                        GeoRegion::Country(cc) => {
+                            if cc.to_lowercase().contains(&search_kw) {
+                                return true;
+                            }
+                            if let Some(zh) = flags::country_name_zh(cc) {
+                                if zh.to_lowercase().contains(&search_kw) {
+                                    return true;
+                                }
+                            }
+                        }
+                        GeoRegion::Private => {
+                            if "局域网".contains(&search_kw) || "lan".contains(&search_kw) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            })
             .collect();
 
         match self.proxy_sort {
@@ -734,63 +815,108 @@ impl MihomoApp {
             .v_flex()
             .size_full()
             .gap_3()
-            // Top Controls
+            // 1. Top Search & Segmented Sort Controls
             .child(
                 div()
                     .h_flex()
                     .items_center()
                     .justify_between()
-                    .gap_2()
+                    .gap_2p5()
                     .flex_wrap()
                     .child(
                         div()
-                            .w(px(280.))
+                            .w(px(270.))
                             .child(Input::new(&self.proxy_search_input).cleanable(true).small()),
                     )
                     .child(
                         div()
                             .h_flex()
                             .items_center()
-                            .gap_1p5()
-                            .children(
-                                [
-                                    (ProxySort::Default, "默认顺序"),
-                                    (ProxySort::LatencyAsc, "延迟升序"),
-                                    (ProxySort::NameAsc, "名称排序"),
-                                ]
-                                .into_iter()
-                                .map(|(sort, lbl)| {
-                                    let mut b = Button::new(SharedString::from(format!("sort-{sort:?}")))
-                                        .xsmall()
-                                        .label(lbl)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.proxy_sort = sort;
-                                            cx.notify();
-                                        }));
-                                    if self.proxy_sort == sort {
-                                        b = b.primary();
-                                    }
-                                    b
-                                }),
+                            .gap_2()
+                            .child(
+                                // Segmented control track
+                                div()
+                                    .h_flex()
+                                    .items_center()
+                                    .gap(px(2.))
+                                    .p(px(3.))
+                                    .rounded_lg()
+                                    .bg(subtle_surface)
+                                    .border_1()
+                                    .border_color(card_border)
+                                    .children(
+                                        [
+                                            (ProxySort::Default, "默认顺序"),
+                                            (ProxySort::LatencyAsc, "延迟升序"),
+                                            (ProxySort::NameAsc, "名称排序"),
+                                        ]
+                                        .into_iter()
+                                        .map(|(sort, lbl)| {
+                                            let active = self.proxy_sort == sort;
+                                            div()
+                                                .id(SharedString::from(format!("sort-{sort:?}")))
+                                                .px_2p5()
+                                                .py(px(4.))
+                                                .rounded_md()
+                                                .cursor_pointer()
+                                                .text_xs()
+                                                .when(active, |el| {
+                                                    el.bg(card_bg)
+                                                        .border_1()
+                                                        .border_color(card_border)
+                                                        .text_color(theme.foreground)
+                                                        .font_semibold()
+                                                })
+                                                .when(!active, |el| {
+                                                    el.border_1()
+                                                        .border_color(transparent_black())
+                                                        .text_color(theme.muted_foreground)
+                                                        .hover(|s| s.text_color(theme.foreground))
+                                                })
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.proxy_sort = sort;
+                                                    cx.notify();
+                                                }))
+                                                .child(lbl)
+                                        }),
+                                    ),
                             )
                             .child(
-                                Button::new("proxies-refresh")
-                                    .xsmall()
-                                    .icon(IconName::RefreshCw)
-                                    .label("刷新")
+                                div()
+                                    .id("proxies-refresh")
+                                    .h_flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .px_2p5()
+                                    .py(px(6.))
+                                    .rounded_lg()
+                                    .bg(card_bg)
+                                    .border_1()
+                                    .border_color(card_border)
+                                    .text_xs()
+                                    .font_medium()
+                                    .text_color(theme.foreground)
+                                    .cursor_pointer()
+                                    .hover(|s| {
+                                        s.bg(card_hover_bg)
+                                            .border_color(accent.opacity(0.45))
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.trigger_full_refresh();
+                                        this.maybe_trigger_geo_resolve(true);
                                         cx.notify();
-                                    })),
+                                    }))
+                                    .child(Icon::new(IconName::RefreshCw).size_3p5())
+                                    .child("刷新"),
                             ),
                     ),
             )
-            // Group Tabs Strip
+            // 2. Group Tabs Strip (polished pills with mini flags for active nodes)
             .child(
                 div()
                     .h_flex()
                     .flex_wrap()
-                    .gap_1p5()
+                    .gap_2()
                     .children(groups.iter().map(|gname| {
                         let is_sel = active_group_name.as_deref() == Some(gname.as_str());
                         let now_label = self
@@ -798,29 +924,40 @@ impl MihomoApp {
                             .get(gname)
                             .and_then(|g| g.now.clone())
                             .unwrap_or_default();
+                        let now_item = self.proxies.get(&now_label);
+                        let now_proto = now_item
+                            .map(|p| p.proxy_type.as_str())
+                            .unwrap_or("");
+                        let now_is_group = now_item.is_some_and(|p| p.is_group());
+                        let now_geo = self.resolve_node_geo(&now_label);
                         let gname_owned = gname.clone();
+
                         div()
                             .id(SharedString::from(format!("grp-tab-{gname}")))
                             .h_flex()
                             .items_center()
-                            .gap_1p5()
+                            .gap_2()
                             .px_3()
                             .py_1p5()
-                            .rounded_md()
+                            .rounded_lg()
                             .cursor_pointer()
                             .border_1()
                             .text_xs()
                             .when(is_sel, |el| {
-                                el.bg(theme.primary.opacity(0.16))
-                                    .border_color(theme.primary)
-                                    .text_color(theme.primary)
+                                el.bg(accent)
+                                    .border_color(accent)
+                                    .text_color(white)
                                     .font_semibold()
                             })
                             .when(!is_sel, |el| {
-                                el.bg(theme.secondary.opacity(0.4))
-                                    .border_color(theme.border)
+                                el.bg(card_bg)
+                                    .border_color(card_border)
                                     .text_color(theme.foreground)
-                                    .hover(|s| s.bg(theme.list_hover))
+                                    .font_medium()
+                                    .hover(|s| {
+                                        s.bg(card_hover_bg)
+                                            .border_color(accent.opacity(0.4))
+                                    })
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.selected_group = Some(gname_owned.clone());
@@ -830,20 +967,53 @@ impl MihomoApp {
                             .when(!now_label.is_empty(), |el| {
                                 el.child(
                                     div()
-                                        .text_color(theme.muted_foreground)
-                                        .max_w(px(110.))
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .child(format!("· {now_label}")),
+                                        .h_flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .px_1p5()
+                                        .py(px(1.))
+                                        .rounded_md()
+                                        .bg(if is_sel {
+                                            white.opacity(0.18)
+                                        } else {
+                                            chip_bg
+                                        })
+                                        .child(render_node_flag_badge(
+                                            &now_label,
+                                            now_proto,
+                                            now_is_group,
+                                            now_geo,
+                                            is_dark,
+                                            cx,
+                                            true,
+                                        ))
+                                        .child(
+                                            div()
+                                                .text_color(if is_sel {
+                                                    white.opacity(0.95)
+                                                } else {
+                                                    theme.muted_foreground
+                                                })
+                                                .font_normal()
+                                                .max_w(px(92.))
+                                                .truncate()
+                                                .child(now_label),
+                                        ),
                                 )
                             })
                     })),
             )
-            // Active Group Header & Node Grid
+            // 3. Active Group Header & Responsive Node Card Grid
             .child(if let Some(group) = active_group {
                 let gname = group.name.clone();
                 let gtype = group.proxy_type.clone();
                 let current_now = group.now.clone().unwrap_or_default();
+                let current_now_item = self.proxies.get(&current_now);
+                let current_now_proto = current_now_item
+                    .map(|p| p.proxy_type.as_str())
+                    .unwrap_or("");
+                let current_now_is_group = current_now_item.is_some_and(|p| p.is_group());
+                let current_now_geo = self.resolve_node_geo(&current_now);
                 let can_select = gtype == "Selector" || gtype == "URLTest" || gtype == "Fallback";
                 let can_unfix = gtype == "URLTest" || gtype == "Fallback";
 
@@ -852,65 +1022,149 @@ impl MihomoApp {
                     .flex_1()
                     .min_h_0()
                     .gap_3()
+                    // Active Group Summary Bar
                     .child(
-                        card(cx)
+                        div()
                             .h_flex()
                             .items_center()
                             .justify_between()
+                            .flex_wrap()
+                            .gap_2()
+                            .px_4()
                             .py_2p5()
+                            .rounded_xl()
+                            .bg(subtle_surface)
+                            .border_1()
+                            .border_color(card_border)
                             .child(
                                 div()
                                     .h_flex()
                                     .items_center()
-                                    .gap_2()
+                                    .flex_wrap()
+                                    .gap_2p5()
                                     .child(
                                         div()
                                             .text_sm()
-                                            .font_semibold()
+                                            .font_bold()
+                                            .text_color(theme.foreground)
                                             .child(gname.clone()),
                                     )
-                                    .child(pill_badge(gtype.clone(), theme.info))
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py(px(2.))
+                                            .rounded_full()
+                                            .bg(accent.opacity(0.12))
+                                            .border_1()
+                                            .border_color(accent.opacity(0.28))
+                                            .text_size(px(11.))
+                                            .font_semibold()
+                                            .text_color(accent)
+                                            .child(gtype.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(1.))
+                                            .h(px(14.))
+                                            .bg(card_border),
+                                    )
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .text_xs()
+                                            .child(
+                                                div()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child("当前"),
+                                            )
+                                            .when(!current_now.is_empty(), |el| {
+                                                el.child(render_node_flag_badge(
+                                                    &current_now,
+                                                    current_now_proto,
+                                                    current_now_is_group,
+                                                    current_now_geo,
+                                                    is_dark,
+                                                    cx,
+                                                    true,
+                                                ))
+                                            })
+                                            .child(
+                                                div()
+                                                    .font_semibold()
+                                                    .text_color(theme.foreground)
+                                                    .child(if current_now.is_empty() {
+                                                        "-".to_string()
+                                                    } else {
+                                                        current_now.clone()
+                                                    }),
+                                            ),
+                                    )
                                     .child(
                                         div()
                                             .text_xs()
                                             .text_color(theme.muted_foreground)
-                                            .child(format!(
-                                                "当前: {}  ({} 个节点)",
-                                                current_now,
-                                                node_names.len()
-                                            )),
+                                            .child(format!("·  {} 个节点", node_names.len())),
                                     ),
                             )
                             .child(
                                 div()
                                     .h_flex()
+                                    .items_center()
                                     .gap_2()
                                     .when(can_unfix, |el| {
                                         let g_unfix = gname.clone();
                                         el.child(
-                                            Button::new("unfix-group")
-                                                .xsmall()
-                                                .label("恢复自动")
+                                            div()
+                                                .id("unfix-group")
+                                                .px_2p5()
+                                                .py_1()
+                                                .rounded_lg()
+                                                .bg(card_bg)
+                                                .border_1()
+                                                .border_color(card_border)
+                                                .text_xs()
+                                                .font_medium()
+                                                .text_color(theme.foreground)
+                                                .cursor_pointer()
+                                                .hover(|s| {
+                                                    s.bg(card_hover_bg)
+                                                        .border_color(accent.opacity(0.45))
+                                                })
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     this.unfix_proxy_group(g_unfix.clone());
                                                     cx.notify();
-                                                })),
+                                                }))
+                                                .child("恢复自动"),
                                         )
                                     })
                                     .child({
                                         let g_test = gname.clone();
-                                        Button::new("test-group-delay")
-                                            .primary()
-                                            .xsmall()
-                                            .icon(IconName::Zap)
-                                            .label("全组测速")
+                                        div()
+                                            .id("test-group-delay")
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .px_3()
+                                            .py_1()
+                                            .rounded_lg()
+                                            .bg(accent)
+                                            .text_color(white)
+                                            .text_xs()
+                                            .font_semibold()
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(accent_hover))
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.test_group_delay(g_test.clone());
                                                 cx.notify();
                                             }))
+                                            .child(Icon::new(IconName::Zap).size_3p5())
+                                            .child("全组测速")
                                     }),
                             ),
                     )
+                    // Responsive Full-Width Node Cards Grid
                     .child(
                         div()
                             .id("proxies-grid-scroll")
@@ -920,16 +1174,23 @@ impl MihomoApp {
                             .overflow_y_scrollbar()
                             .child(
                                 div()
-                                    .h_flex()
-                                    .flex_wrap()
-                                    .gap_2p5()
+                                    .grid()
+                                    .grid_cols(grid_cols)
+                                    .gap_3()
+                                    .w_full()
+                                    .pb_2()
                                     .children(node_names.into_iter().enumerate().map(|(i, node)| {
                                         let is_current = node == current_now;
                                         let item = self.proxies.get(&node);
-                                        let proto = item
-                                            .map(|p| p.proxy_type.clone())
-                                            .unwrap_or_else(|| "Proxy".to_string());
+                                        let raw_proto = item
+                                            .map(|p| p.proxy_type.as_str())
+                                            .unwrap_or("Proxy");
+                                        let proto_label = short_protocol_label(raw_proto);
+                                        let is_group = item.is_some_and(|p| p.is_group());
                                         let udp = item.is_some_and(|p| p.udp);
+                                        let geo = self.resolve_node_geo(&node);
+                                        let region_label =
+                                            region_short_label(&node, raw_proto, geo);
                                         let delay = self
                                             .proxy_delays
                                             .get(&node)
@@ -937,28 +1198,36 @@ impl MihomoApp {
                                             .or_else(|| item.and_then(|p| p.latest_delay()));
                                         let d_color = delay_color(delay, cx);
                                         let d_text = delay_text(delay);
+                                        let has_delay = delay.is_some();
                                         let g_click = gname.clone();
                                         let n_click = node.clone();
                                         let n_test = node.clone();
 
                                         div()
                                             .id(SharedString::from(format!("node-{i}-{node}")))
+                                            .relative()
                                             .v_flex()
                                             .justify_between()
-                                            .w(px(236.))
-                                            .min_h(px(74.))
-                                            .p_3()
-                                            .rounded_lg()
+                                            .gap_3()
+                                            .min_w_0()
+                                            .min_h(px(84.))
+                                            .px_3p5()
+                                            .py_3()
+                                            .rounded_xl()
                                             .border_1()
+                                            .overflow_hidden()
                                             .cursor_pointer()
                                             .when(is_current, |el| {
-                                                el.bg(theme.primary.opacity(0.14))
-                                                    .border_color(theme.primary)
+                                                el.bg(card_selected_bg)
+                                                    .border_color(accent.opacity(0.75))
                                             })
                                             .when(!is_current, |el| {
-                                                el.bg(theme.secondary.opacity(0.45))
-                                                    .border_color(theme.border)
-                                                    .hover(|s| s.bg(theme.list_hover))
+                                                el.bg(card_bg)
+                                                    .border_color(card_border)
+                                                    .hover(|s| {
+                                                        s.bg(card_hover_bg)
+                                                            .border_color(accent.opacity(0.45))
+                                                    })
                                             })
                                             .when(can_select, |el| {
                                                 el.on_click(cx.listener(move |this, _, _, cx| {
@@ -969,55 +1238,137 @@ impl MihomoApp {
                                                     cx.notify();
                                                 }))
                                             })
+                                            // Sleek left accent bar for the active node
+                                            .when(is_current, |el| {
+                                                el.child(
+                                                    div()
+                                                        .absolute()
+                                                        .left_0()
+                                                        .top_2p5()
+                                                        .bottom_2p5()
+                                                        .w(px(3.))
+                                                        .rounded_r_full()
+                                                        .bg(accent),
+                                                )
+                                            })
+                                            // Card Top Row: Flag + Node Name + Selected Check Circle
                                             .child(
                                                 div()
                                                     .h_flex()
                                                     .items_center()
                                                     .justify_between()
-                                                    .gap_1()
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_semibold()
-                                                            .overflow_hidden()
-                                                            .whitespace_nowrap()
-                                                            .text_color(if is_current {
-                                                                theme.primary
-                                                            } else {
-                                                                theme.foreground
-                                                            })
-                                                            .child(node.clone()),
-                                                    )
-                                                    .when(is_current, |el| {
-                                                        el.child(
-                                                            Icon::new(IconName::Check)
-                                                                .size_3p5()
-                                                                .text_color(theme.primary),
-                                                        )
-                                                    }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .h_flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .pt_2()
+                                                    .gap_2()
+                                                    .min_w_0()
                                                     .child(
                                                         div()
                                                             .h_flex()
                                                             .items_center()
-                                                            .gap_1()
-                                                            .text_xs()
-                                                            .text_color(theme.muted_foreground)
-                                                            .child(proto)
+                                                            .gap_2()
+                                                            .flex_1()
+                                                            .min_w_0()
+                                                            .child(render_node_flag_badge(
+                                                                &node,
+                                                                raw_proto,
+                                                                is_group,
+                                                                geo,
+                                                                is_dark,
+                                                                cx,
+                                                                false,
+                                                            ))
+                                                            .child(
+                                                                div()
+                                                                    .flex_1()
+                                                                    .min_w_0()
+                                                                    .text_sm()
+                                                                    .font_semibold()
+                                                                    .truncate()
+                                                                    .text_color(if is_current {
+                                                                        accent
+                                                                    } else {
+                                                                        theme.foreground
+                                                                    })
+                                                                    .child(node.clone()),
+                                                            ),
+                                                    )
+                                                    .when(is_current, |el| {
+                                                        el.child(
+                                                            div()
+                                                                .h_flex()
+                                                                .items_center()
+                                                                .justify_center()
+                                                                .flex_shrink_0()
+                                                                .size(px(18.))
+                                                                .rounded_full()
+                                                                .bg(accent)
+                                                                .child(
+                                                                    Icon::new(IconName::Check)
+                                                                        .size(px(11.))
+                                                                        .text_color(white),
+                                                                ),
+                                                        )
+                                                    }),
+                                            )
+                                            // Card Bottom Row: Protocol / UDP / Region | Latency Pill
+                                            .child(
+                                                div()
+                                                    .h_flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .gap_2()
+                                                    .min_w_0()
+                                                    .child(
+                                                        div()
+                                                            .h_flex()
+                                                            .items_center()
+                                                            .gap_1p5()
+                                                            .flex_1()
+                                                            .min_w_0()
+                                                            .overflow_hidden()
+                                                            .child(
+                                                                div()
+                                                                    .flex_shrink_0()
+                                                                    .px_1p5()
+                                                                    .py(px(1.5))
+                                                                    .rounded(px(5.))
+                                                                    .bg(if is_current {
+                                                                        accent.opacity(0.12)
+                                                                    } else {
+                                                                        chip_bg
+                                                                    })
+                                                                    .text_size(px(10.5))
+                                                                    .font_medium()
+                                                                    .text_color(if is_current {
+                                                                        accent.opacity(0.9)
+                                                                    } else {
+                                                                        theme.muted_foreground
+                                                                    })
+                                                                    .child(proto_label),
+                                                            )
                                                             .when(udp, |el| {
                                                                 el.child(
                                                                     div()
+                                                                        .flex_shrink_0()
                                                                         .px_1()
-                                                                        .rounded_sm()
-                                                                        .bg(theme.muted)
-                                                                        .text_xs()
+                                                                        .py(px(1.5))
+                                                                        .rounded(px(5.))
+                                                                        .bg(theme.info.opacity(0.12))
+                                                                        .text_size(px(10.))
+                                                                        .font_semibold()
+                                                                        .text_color(theme.info)
                                                                         .child("UDP"),
+                                                                )
+                                                            })
+                                                            .when_some(region_label, |el, lbl| {
+                                                                el.child(
+                                                                    div()
+                                                                        .flex_1()
+                                                                        .min_w_0()
+                                                                        .truncate()
+                                                                        .text_size(px(11.))
+                                                                        .text_color(
+                                                                            theme.muted_foreground,
+                                                                        )
+                                                                        .child(lbl),
                                                                 )
                                                             }),
                                                     )
@@ -1026,14 +1377,26 @@ impl MihomoApp {
                                                             .id(SharedString::from(format!(
                                                                 "delay-{i}-{node}"
                                                             )))
-                                                            .px_1p5()
-                                                            .py(px(1.))
-                                                            .rounded_sm()
-                                                            .bg(d_color.opacity(0.14))
-                                                            .text_xs()
+                                                            .h_flex()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .flex_shrink_0()
+                                                            .px_2()
+                                                            .py(px(2.))
+                                                            .rounded_full()
+                                                            .bg(d_color.opacity(0.12))
+                                                            .border_1()
+                                                            .border_color(d_color.opacity(0.24))
+                                                            .text_size(px(11.))
                                                             .font_semibold()
                                                             .text_color(d_color)
                                                             .cursor_pointer()
+                                                            .hover(|s| {
+                                                                s.bg(d_color.opacity(0.22))
+                                                                    .border_color(
+                                                                        d_color.opacity(0.45),
+                                                                    )
+                                                            })
                                                             .on_click(cx.listener(
                                                                 move |this, _, _, cx| {
                                                                     cx.stop_propagation();
@@ -1043,6 +1406,14 @@ impl MihomoApp {
                                                                     cx.notify();
                                                                 },
                                                             ))
+                                                            .when(has_delay, |el| {
+                                                                el.child(
+                                                                    div()
+                                                                        .size(px(5.5))
+                                                                        .rounded_full()
+                                                                        .bg(d_color),
+                                                                )
+                                                            })
                                                             .child(d_text),
                                                     ),
                                             )
@@ -1062,6 +1433,182 @@ impl MihomoApp {
                     .into_any_element()
             })
     }
+}
+
+fn short_protocol_label(proto: &str) -> String {
+    match proto {
+        "Shadowsocks" => "SS".to_string(),
+        "ShadowsocksR" => "SSR".to_string(),
+        "Http" => "HTTP".to_string(),
+        "Socks5" => "SOCKS5".to_string(),
+        "WireGuard" => "WG".to_string(),
+        "Direct" => "Direct".to_string(),
+        "Reject" => "Reject".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn region_short_label(node_name: &str, proto: &str, geo: Option<&NodeGeoInfo>) -> Option<String> {
+    if proto.eq_ignore_ascii_case("Direct") || node_name.eq_ignore_ascii_case("DIRECT") {
+        return Some("直连".to_string());
+    }
+    if proto.eq_ignore_ascii_case("Reject")
+        || node_name.eq_ignore_ascii_case("REJECT")
+        || node_name.eq_ignore_ascii_case("REJECT-DROP")
+    {
+        return Some("拦截".to_string());
+    }
+    match geo.map(|g| &g.region) {
+        Some(GeoRegion::Country(cc)) => {
+            Some(flags::country_name_zh(cc).unwrap_or(cc.as_str()).to_string())
+        }
+        Some(GeoRegion::Private) => Some("局域网".to_string()),
+        None => None,
+    }
+}
+
+fn render_node_flag_badge(
+    node_name: &str,
+    proto: &str,
+    is_group: bool,
+    geo: Option<&NodeGeoInfo>,
+    is_dark: bool,
+    cx: &App,
+    compact: bool,
+) -> AnyElement {
+    let theme = cx.theme();
+    let (w, h, rad) = if compact {
+        (px(16.), px(12.), px(2.5))
+    } else {
+        (px(24.), px(17.), px(3.5))
+    };
+    let flag_border: Hsla = if is_dark {
+        hsla(0.0, 0.0, 1.0, 0.16)
+    } else {
+        hsla(0.0, 0.0, 0.0, 0.12)
+    };
+
+    // 1. Built-in DIRECT / REJECT special nodes
+    if proto.eq_ignore_ascii_case("Direct") || node_name.eq_ignore_ascii_case("DIRECT") {
+        return div()
+            .h_flex()
+            .items_center()
+            .justify_center()
+            .flex_shrink_0()
+            .w(w)
+            .h(h)
+            .rounded(rad)
+            .bg(theme.success.opacity(0.16))
+            .border_1()
+            .border_color(theme.success.opacity(0.32))
+            .child(
+                Icon::new(IconName::ArrowRight)
+                    .size(if compact { px(9.) } else { px(12.) })
+                    .text_color(theme.success),
+            )
+            .into_any_element();
+    }
+    if proto.eq_ignore_ascii_case("Reject")
+        || node_name.eq_ignore_ascii_case("REJECT")
+        || node_name.eq_ignore_ascii_case("REJECT-DROP")
+    {
+        return div()
+            .h_flex()
+            .items_center()
+            .justify_center()
+            .flex_shrink_0()
+            .w(w)
+            .h(h)
+            .rounded(rad)
+            .bg(theme.danger.opacity(0.16))
+            .border_1()
+            .border_color(theme.danger.opacity(0.32))
+            .child(
+                Icon::new(IconName::X)
+                    .size(if compact { px(9.) } else { px(12.) })
+                    .text_color(theme.danger),
+            )
+            .into_any_element();
+    }
+
+    // 2. GeoIP-resolved Country Flag or Private LAN badge
+    if let Some(info) = geo {
+        match &info.region {
+            GeoRegion::Country(cc) => {
+                if let Some(flag_img) = flags::flag_image(cc) {
+                    return div()
+                        .flex_shrink_0()
+                        .w(w)
+                        .h(h)
+                        .rounded(rad)
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(flag_border)
+                        .child(img(flag_img).size_full().object_fit(ObjectFit::Cover))
+                        .into_any_element();
+                }
+                return div()
+                    .h_flex()
+                    .items_center()
+                    .justify_center()
+                    .flex_shrink_0()
+                    .w(w)
+                    .h(h)
+                    .rounded(rad)
+                    .bg(theme.info.opacity(0.15))
+                    .border_1()
+                    .border_color(theme.info.opacity(0.35))
+                    .text_size(if compact { px(8.) } else { px(9.5) })
+                    .font_bold()
+                    .text_color(theme.info)
+                    .child(cc.clone())
+                    .into_any_element();
+            }
+            GeoRegion::Private => {
+                return div()
+                    .h_flex()
+                    .items_center()
+                    .justify_center()
+                    .flex_shrink_0()
+                    .w(w)
+                    .h(h)
+                    .rounded(rad)
+                    .bg(theme.info.opacity(0.14))
+                    .border_1()
+                    .border_color(theme.info.opacity(0.3))
+                    .child(
+                        Icon::new(IconName::Network)
+                            .size(if compact { px(9.) } else { px(12.) })
+                            .text_color(theme.info),
+                    )
+                    .into_any_element();
+            }
+        }
+    }
+
+    // 3. Nested strategy group or unresolved fallback
+    let icon = if is_group {
+        IconName::GitBranch
+    } else {
+        IconName::Globe
+    };
+    div()
+        .h_flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .w(w)
+        .h(h)
+        .rounded(rad)
+        .bg(theme.muted)
+        .border_1()
+        .border_color(flag_border)
+        .child(
+            Icon::new(icon)
+                .size(if compact { px(9.) } else { px(12.) })
+                .text_color(theme.muted_foreground),
+        )
+        .into_any_element()
 }
 
 fn stat_cell(label: &str, value: String, color: Hsla, cx: &App) -> Div {

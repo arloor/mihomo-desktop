@@ -1,6 +1,7 @@
 use crate::config::{
     self, AppSettings, Profile, ProfileStore, format_bytes, format_speed,
 };
+use crate::geo::{self, GeoRegion, NodeGeoInfo};
 use crate::mihomo::{
     ConnectionsResponse, DnsQueryResponse, MihomoClient, MihomoConfig, ProxyItem, ProxyProvider,
     RuleItem, RuleProvider, VersionInfo,
@@ -31,7 +32,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug)]
 pub enum UiEvent {
@@ -62,6 +63,10 @@ pub enum UiEvent {
     ReleasesFetched(Result<Vec<GitHubRelease>, String>),
     CoreDownloaded(Result<LocalCoreVersion, String>),
     DnsQueried(Result<DnsQueryResponse, String>),
+    ProxyGeoResolved {
+        node_geos: HashMap<String, NodeGeoInfo>,
+        host_cache: HashMap<String, (Option<String>, GeoRegion)>,
+    },
     ActionFinished {
         label: String,
         result: Result<String, String>,
@@ -87,6 +92,10 @@ pub struct MihomoApp {
     pub mihomo_config: Option<MihomoConfig>,
     pub proxies: HashMap<String, ProxyItem>,
     pub proxy_delays: HashMap<String, u32>,
+    pub proxy_geos: HashMap<String, NodeGeoInfo>,
+    geo_host_cache: HashMap<String, (Option<String>, GeoRegion)>,
+    pub geo_resolving: bool,
+    geo_config_sig: Option<(String, Option<SystemTime>, u64)>,
     pub proxy_providers: HashMap<String, ProxyProvider>,
     pub rule_providers: HashMap<String, RuleProvider>,
     pub rules: Vec<RuleItem>,
@@ -332,6 +341,10 @@ impl MihomoApp {
             mihomo_config: None,
             proxies: HashMap::new(),
             proxy_delays: HashMap::new(),
+            proxy_geos: HashMap::new(),
+            geo_host_cache: HashMap::new(),
+            geo_resolving: false,
+            geo_config_sig: None,
             proxy_providers: HashMap::new(),
             rule_providers: HashMap::new(),
             rules: Vec::new(),
@@ -582,6 +595,7 @@ impl MihomoApp {
                     {
                         self.selected_group = groups.first().cloned();
                     }
+                    self.maybe_trigger_geo_resolve(false);
                 }
                 if let Some(pp) = proxy_providers {
                     self.proxy_providers = pp;
@@ -699,6 +713,14 @@ impl MihomoApp {
                     Err(e) => self.set_notice(true, format!("DNS 查询失败: {e}")),
                 }
             }
+            UiEvent::ProxyGeoResolved {
+                node_geos,
+                host_cache,
+            } => {
+                self.geo_resolving = false;
+                self.proxy_geos = node_geos;
+                self.geo_host_cache = host_cache;
+            }
             UiEvent::ActionFinished {
                 label,
                 result,
@@ -710,6 +732,9 @@ impl MihomoApp {
                     Err(e) => self.set_notice(true, format!("{label} 失败: {e}")),
                 }
                 if refresh_after {
+                    if label.contains("GEO") {
+                        self.maybe_trigger_geo_resolve(true);
+                    }
                     self.trigger_full_refresh();
                 }
             }
@@ -752,6 +777,68 @@ impl MihomoApp {
 
     pub fn client(&self) -> MihomoClient {
         MihomoClient::new(&self.settings.controller_addr, &self.settings.controller_secret)
+    }
+
+    /// Look up GeoIP info for a proxy node, transitively following `.now` for nested proxy groups.
+    pub fn resolve_node_geo(&self, node_name: &str) -> Option<&NodeGeoInfo> {
+        let mut current = node_name;
+        for _ in 0..4 {
+            if let Some(info) = self.proxy_geos.get(current) {
+                return Some(info);
+            }
+            let next = self
+                .proxies
+                .get(current)
+                .filter(|p| p.is_group())
+                .and_then(|p| p.now.as_deref())?;
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        None
+    }
+
+    pub fn maybe_trigger_geo_resolve(&mut self, force: bool) {
+        if self.geo_resolving && !force {
+            return;
+        }
+        let cfg_path = self.settings.active_config_path.clone();
+        let sig = std::fs::metadata(&cfg_path)
+            .ok()
+            .map(|m| (cfg_path.clone(), m.modified().ok(), m.len()));
+
+        if !force && self.geo_config_sig == sig && !self.proxy_geos.is_empty() {
+            return;
+        }
+        if force {
+            self.geo_host_cache.clear();
+        }
+
+        self.geo_config_sig = sig;
+        self.geo_resolving = true;
+
+        let config_path = std::path::PathBuf::from(cfg_path);
+        let work_dir = std::path::PathBuf::from(&self.settings.work_dir);
+        let core_binary_path = std::path::PathBuf::from(&self.settings.core_binary_path);
+        let client = self.api_online.then(|| self.client());
+        let existing_cache = self.geo_host_cache.clone();
+        let tx = self.tx.clone();
+
+        tokio_rt().spawn(async move {
+            let (node_geos, host_cache) = geo::resolve_all_proxy_geos(
+                config_path,
+                work_dir,
+                core_binary_path,
+                client,
+                existing_cache,
+            )
+            .await;
+            let _ = tx.send(UiEvent::ProxyGeoResolved {
+                node_geos,
+                host_cache,
+            });
+        });
     }
 
     pub fn sorted_proxy_groups(&self) -> Vec<String> {
