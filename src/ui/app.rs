@@ -1127,6 +1127,7 @@ impl MihomoApp {
     pub fn toggle_tun_mode(&mut self, enable: bool) {
         self.settings.tun_enabled = enable;
         let _ = config::save_settings(&self.settings);
+        self.sync_tray_state();
 
         self.busy_action = Some(if enable {
             "正在开启 TUN 模式并应用默认 TUN/DNS 配置...".to_string()

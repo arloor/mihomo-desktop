@@ -26,6 +26,26 @@ pub struct TrayState {
     pub main_hwnd: isize,
 }
 
+/// Resolve the badge RGB color for the system tray icon:
+/// - TUN mode active (`tun_enabled && service_running`): Vivid Purple (#A855F7)
+/// - System Proxy ManagedEffective: Emerald Green (#10B981)
+/// - System Proxy ManagedIneffective: Amber Warning (#F59E0B)
+/// - Unmanaged (default): Cool Blue (#3B82F6)
+pub(crate) fn resolve_status_icon_color(
+    proxy_state: SystemProxyTakeoverState,
+    tun_enabled: bool,
+    service_running: bool,
+) -> (u8, u8, u8) {
+    if tun_enabled && service_running {
+        return (0xA8, 0x55, 0xF7);
+    }
+    match proxy_state {
+        SystemProxyTakeoverState::ManagedEffective => (0x10, 0xB9, 0x81),
+        SystemProxyTakeoverState::ManagedIneffective => (0xF5, 0x9E, 0x0B),
+        SystemProxyTakeoverState::Unmanaged => (0x3B, 0x82, 0xF6),
+    }
+}
+
 impl Default for TrayState {
     fn default() -> Self {
         Self {
@@ -459,7 +479,7 @@ mod win {
             return;
         }
 
-        let new_icon = create_status_icon(snapshot.proxy_state);
+        let new_icon = create_status_icon(&snapshot);
         let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
@@ -686,17 +706,18 @@ mod win {
         }
     }
 
-    /// Generate a crisp 32x32 RGBA tray icon color-coded by System Proxy takeover state:
+    /// Generate a crisp 32x32 RGBA tray icon color-coded by TUN and System Proxy state:
+    /// - TUN active (`tun_enabled && service_running`): Vivid Purple (#A855F7)
     /// - ManagedEffective: Emerald Green (#10B981)
     /// - ManagedIneffective: Amber Warning (#F59E0B)
     /// - Unmanaged: Cool Blue (#3B82F6)
-    fn create_status_icon(state: SystemProxyTakeoverState) -> HICON {
+    fn create_status_icon(state: &TrayState) -> HICON {
         const SIZE: i32 = 32;
-        let (r, g, b): (u8, u8, u8) = match state {
-            SystemProxyTakeoverState::ManagedEffective => (0x10, 0xB9, 0x81),
-            SystemProxyTakeoverState::ManagedIneffective => (0xF5, 0x9E, 0x0B),
-            SystemProxyTakeoverState::Unmanaged => (0x3B, 0x82, 0xF6),
-        };
+        let (r, g, b) = resolve_status_icon_color(
+            state.proxy_state,
+            state.tun_enabled,
+            state.service_running,
+        );
 
         unsafe {
             let mut bi: BITMAPINFO = std::mem::zeroed();
@@ -817,3 +838,49 @@ mod win {
 }
 
 pub use win::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_icon_color_reflects_tun_and_proxy_states() {
+        // TUN enabled + service running -> Purple (#A855F7) regardless of system proxy state
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::Unmanaged, true, true),
+            (0xA8, 0x55, 0xF7)
+        );
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::ManagedEffective, true, true),
+            (0xA8, 0x55, 0xF7)
+        );
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::ManagedIneffective, true, true),
+            (0xA8, 0x55, 0xF7)
+        );
+
+        // TUN enabled but service stopped -> falls back to system proxy color
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::Unmanaged, true, false),
+            (0x3B, 0x82, 0xF6)
+        );
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::ManagedIneffective, true, false),
+            (0xF5, 0x9E, 0x0B)
+        );
+
+        // TUN disabled -> uses system proxy takeover colors
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::ManagedEffective, false, true),
+            (0x10, 0xB9, 0x81)
+        );
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::ManagedIneffective, false, true),
+            (0xF5, 0x9E, 0x0B)
+        );
+        assert_eq!(
+            resolve_status_icon_color(SystemProxyTakeoverState::Unmanaged, false, true),
+            (0x3B, 0x82, 0xF6)
+        );
+    }
+}
