@@ -36,6 +36,7 @@ use std::time::{Duration, SystemTime};
 
 #[derive(Debug)]
 pub enum UiEvent {
+    DesktopUpdate(crate::system::desktop_update::UpdateState),
     SnapshotRefreshed {
         service: ServiceStatusInfo,
         sys_proxy: SystemProxyStatus,
@@ -121,6 +122,7 @@ pub struct MihomoApp {
     pub expanded_release_tag: Option<String>,
 
     // Status feedback
+    pub desktop_update: crate::system::desktop_update::UpdateState,
     pub busy_action: Option<String>,
     pending_notices: Vec<(bool, String)>,
 
@@ -135,10 +137,6 @@ pub struct MihomoApp {
     pub dns_domain_input: Entity<InputState>,
 
     // Settings inputs
-    pub setting_service_name: Entity<InputState>,
-    pub setting_core_path: Entity<InputState>,
-    pub setting_work_dir: Entity<InputState>,
-    pub setting_config_path: Entity<InputState>,
     pub setting_controller_addr: Entity<InputState>,
     pub setting_controller_secret: Entity<InputState>,
     pub setting_mixed_port: Entity<InputState>,
@@ -160,6 +158,20 @@ pub struct MihomoApp {
 impl MihomoApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut settings = config::load_settings();
+        let service_status = service::query_service(&settings.service_name).unwrap_or_default();
+        if let Some(paths) = service_status.binary_path.as_deref()
+            .and_then(config::discover_from_service_binary_cmdline)
+        {
+            if let Some(path) = paths.core_binary_path {
+                settings.core_binary_path = path;
+            }
+            if let Some(path) = paths.work_dir {
+                settings.work_dir = path;
+            }
+            if let Some(path) = paths.config_path {
+                settings.active_config_path = path;
+            }
+        }
         let mut profiles = config::load_profiles();
 
         // Sync initial theme from settings
@@ -189,7 +201,6 @@ impl MihomoApp {
             }
         }
 
-        let service_status = service::query_service(&settings.service_name).unwrap_or_default();
         let system_proxy = proxy::get_system_proxy().unwrap_or_default();
         let local_cores = core_manager::list_local_cores();
 
@@ -268,7 +279,7 @@ impl MihomoApp {
         });
         let local_import_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder(r"输入本地 YAML 文件路径，例如 C:\ProgramData\Mihomo\config\clash.yaml")
+                .placeholder("输入本地 YAML 文件路径")
         });
         for input in [&profile_url_input, &local_import_input] {
             cx.observe(input, |_, _, cx| cx.notify()).detach();
@@ -283,26 +294,6 @@ impl MihomoApp {
                 .default_value("www.google.com")
         });
 
-        let setting_service_name = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("mihomo")
-                .default_value(settings.service_name.clone())
-        });
-        let setting_core_path = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(r"C:\Program Files\Mihomo\mihomo.exe")
-                .default_value(settings.core_binary_path.clone())
-        });
-        let setting_work_dir = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(r"C:\ProgramData\Mihomo")
-                .default_value(settings.work_dir.clone())
-        });
-        let setting_config_path = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(r"C:\ProgramData\Mihomo\config\clash.yaml")
-                .default_value(settings.active_config_path.clone())
-        });
         let setting_controller_addr = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("127.0.0.1:9090")
@@ -352,7 +343,7 @@ impl MihomoApp {
             telemetry,
             selected_group: None,
             proxy_sort: ProxySort::Default,
-            providers_tab: ProvidersTab::ProxyProviders,
+            providers_tab: ProvidersTab::RuleProviders,
             conn_sort: ConnSort::Newest,
             connections_paused: false,
             tools_tab: ToolsTab::Logs,
@@ -362,6 +353,7 @@ impl MihomoApp {
             github_releases: Vec::new(),
             local_cores,
             expanded_release_tag: None,
+            desktop_update: crate::system::desktop_update::UpdateState::Idle,
             busy_action: None,
             pending_notices: Vec::new(),
             profile_name_input,
@@ -372,10 +364,6 @@ impl MihomoApp {
             conn_search_input,
             log_search_input,
             dns_domain_input,
-            setting_service_name,
-            setting_core_path,
-            setting_work_dir,
-            setting_config_path,
             setting_controller_addr,
             setting_controller_secret,
             setting_mixed_port,
@@ -549,6 +537,13 @@ impl MihomoApp {
 
     fn handle_event(&mut self, ev: UiEvent) {
         match ev {
+            UiEvent::DesktopUpdate(state) => {
+                use crate::system::desktop_update::UpdateState;
+                if let UpdateState::Ready { version, .. } = &state {
+                    self.set_notice(false, format!("v{version} 已下载，在应用设置中点击「开始更新」。"));
+                }
+                self.desktop_update = state;
+            }
             UiEvent::SnapshotRefreshed {
                 service,
                 sys_proxy,
@@ -1723,11 +1718,6 @@ impl MihomoApp {
     // ---- Settings Save & Auto-Discover ----
 
     pub fn save_all_settings(&mut self, cx: &App) {
-        self.settings.service_name = self.setting_service_name.read(cx).value().trim().to_string();
-        self.settings.core_binary_path = self.setting_core_path.read(cx).value().trim().to_string();
-        self.settings.work_dir = self.setting_work_dir.read(cx).value().trim().to_string();
-        self.settings.active_config_path =
-            self.setting_config_path.read(cx).value().trim().to_string();
         self.settings.controller_addr = config::normalize_controller_addr(
             &self.setting_controller_addr.read(cx).value(),
         );
@@ -1765,43 +1755,6 @@ impl MihomoApp {
         self.sync_tray_state();
 
         self.set_notice(false, "设置已保存并生效");
-        self.trigger_full_refresh();
-    }
-
-    pub fn auto_discover_service(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Ok(info) = service::query_service(&self.settings.service_name) {
-            if let Some(bin) = &info.binary_path {
-                if let Some(d) = config::discover_from_service_binary_cmdline(bin) {
-                    if let Some(exe) = d.core_binary_path {
-                        self.settings.core_binary_path = exe.clone();
-                        self.setting_core_path
-                            .update(cx, |s, cx| s.set_value(exe, window, cx));
-                    }
-                    if let Some(work) = d.work_dir {
-                        self.settings.work_dir = work.clone();
-                        self.setting_work_dir
-                            .update(cx, |s, cx| s.set_value(work, window, cx));
-                    }
-                    if let Some(cfg) = d.config_path {
-                        self.settings.active_config_path = cfg.clone();
-                        self.setting_config_path
-                            .update(cx, |s, cx| s.set_value(cfg, window, cx));
-                    }
-                }
-            }
-        }
-        config::sync_settings_from_yaml(&mut self.settings);
-        let addr = self.settings.controller_addr.clone();
-        let sec = self.settings.controller_secret.clone();
-        let port = self.settings.mixed_port.to_string();
-        self.setting_controller_addr
-            .update(cx, |s, cx| s.set_value(addr, window, cx));
-        self.setting_controller_secret
-            .update(cx, |s, cx| s.set_value(sec, window, cx));
-        self.setting_mixed_port
-            .update(cx, |s, cx| s.set_value(port, window, cx));
-        let _ = config::save_settings(&self.settings);
-        self.set_notice(false, "已从 Windows 服务配置与 YAML 自动同步路径与控制器参数");
         self.trigger_full_refresh();
     }
 

@@ -4,7 +4,73 @@ use std::path::PathBuf;
 
 const APP_ICON_GROUP_ID: u16 = 1;
 
+fn git(args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git").args(args).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn release_version(tag: &str) -> Option<semver::Version> {
+    semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag)).ok()
+}
+
+fn nearest_release_version() -> Option<semver::Version> {
+    let tags = git(&["tag", "--merged", "HEAD"])?;
+    let mut args = vec!["describe", "--tags", "--abbrev=0"];
+    for tag in tags.lines().filter(|tag| release_version(tag).is_some()) {
+        args.extend(["--match", tag]);
+    }
+    if args.len() == 3 {
+        return None;
+    }
+    release_version(&git(&args)?)
+}
+
+fn configure_version() {
+    println!("cargo:rerun-if-env-changed=MIHOMO_DESKTOP_VERSION");
+    let mut base = env::var("CARGO_PKG_VERSION").expect("Cargo package version");
+    let mut display = base.clone();
+    if let Ok(release) = env::var("MIHOMO_DESKTOP_VERSION") {
+        base = semver::Version::parse(&release)
+            .expect("invalid release version")
+            .to_string();
+        display = base.clone();
+    } else if let Some(commit) = git(&["rev-parse", "--short", "HEAD"]) {
+        // HEAD may be detached, symbolic, or part of a linked worktree.
+        let mut refs = vec![
+            "HEAD".to_owned(),
+            "refs/tags".to_owned(),
+            "packed-refs".to_owned(),
+        ];
+        refs.extend(git(&["symbolic-ref", "-q", "HEAD"]));
+        for name in refs {
+            if let Some(path) = git(&["rev-parse", "--git-path", &name]) {
+                let path = PathBuf::from(path);
+                if let Some(existing) = path.ancestors().find(|p| p.exists()) {
+                    println!("cargo:rerun-if-changed={}", existing.display());
+                }
+            }
+        }
+        let tags = git(&["tag", "--points-at", "HEAD"]).unwrap_or_default();
+        let exact = tags.lines().filter_map(release_version).max();
+        if let Some(tag) = exact {
+            base = tag.to_string();
+            display = base.clone();
+        } else {
+            if let Some(tag) = nearest_release_version() {
+                base = tag.to_string();
+            }
+            display = format!("{base}-{commit}");
+        }
+    }
+    println!("cargo:rustc-env=MIHOMO_DESKTOP_BASE_VERSION={base}");
+    println!("cargo:rustc-env=MIHOMO_DESKTOP_DISPLAY_VERSION={display}");
+}
+
 fn main() {
+    configure_version();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=assets/icon.ico");
 

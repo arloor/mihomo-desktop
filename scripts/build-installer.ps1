@@ -11,24 +11,19 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
-if (-not $Version) {
-    $cargoToml = Get-Content (Join-Path $RepoRoot "Cargo.toml") -Raw
-    if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"') {
-        $Version = $Matches[1]
-    } else {
-        $Version = "0.1.0"
-    }
-}
 $Version = $Version.TrimStart('v')
-Write-Host "==> Target version: $Version" -ForegroundColor Cyan
 
 $MirrorPrefix = if ($GitHubMirror) { $GitHubMirror.TrimEnd('/') + '/' } else { "" }
 
 Write-Host "==> 1. Building mihomo-desktop (release)..." -ForegroundColor Cyan
 if (-not $SkipBuild) {
-    cargo build --release
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo build --release failed"
+    $previousVersion = $env:MIHOMO_DESKTOP_VERSION
+    try {
+        if ($Version) { $env:MIHOMO_DESKTOP_VERSION = $Version } else { Remove-Item Env:MIHOMO_DESKTOP_VERSION -ErrorAction SilentlyContinue }
+        cargo build --release
+        if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed" }
+    } finally {
+        $env:MIHOMO_DESKTOP_VERSION = $previousVersion
     }
 }
 
@@ -36,6 +31,13 @@ $DesktopExe = Join-Path $RepoRoot "target\release\mihomo-desktop.exe"
 if (-not (Test-Path $DesktopExe)) {
     throw "Release binary not found: $DesktopExe"
 }
+
+# Use the version compiled into the executable, including with -SkipBuild.
+$builtVersion = & $DesktopExe --version | Select-Object -First 1
+if ($LASTEXITCODE -ne 0 -or -not $builtVersion) { throw "Cannot read version from $DesktopExe" }
+if ($Version -and $Version -cne $builtVersion) { throw "Requested $Version but binary reports $builtVersion" }
+$Version = $builtVersion
+Write-Host "==> Packaging version: $Version" -ForegroundColor Cyan
 
 Write-Host "==> 2. Locating bundled mihomo.exe..." -ForegroundColor Cyan
 $Candidates = @()

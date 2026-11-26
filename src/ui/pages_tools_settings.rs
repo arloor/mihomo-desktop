@@ -1,4 +1,7 @@
 use crate::config;
+use crate::system::desktop_update::{self, UpdateState};
+use crate::ui::app::UiEvent;
+use gpui_kit::component::Disableable as _;
 use crate::ui::app::MihomoApp;
 use crate::ui::{ToolsTab, card, pill_badge, section_header, section_title};
 
@@ -162,8 +165,10 @@ impl MihomoApp {
                         div()
                             .v_flex()
                             .gap_1()
-                            .font_family("Consolas")
-                            .text_xs()
+                            .w_full()
+                            .font_family(theme.mono_font_family.clone())
+                            .text_sm()
+                            .line_height(px(20.))
                             .when(logs.is_empty(), |el| {
                                 el.child(
                                     div()
@@ -184,7 +189,7 @@ impl MihomoApp {
                                     .items_start()
                                     .child(
                                         div()
-                                            .w(px(58.))
+                                            .w(px(76.))
                                             .flex_shrink_0()
                                             .font_semibold()
                                             .text_color(lvl_color)
@@ -193,6 +198,8 @@ impl MihomoApp {
                                     .child(
                                         div()
                                             .flex_1()
+                                            .min_w_0()
+                                            .whitespace_normal()
                                             .text_color(theme.foreground)
                                             .child(entry.payload),
                                     )
@@ -324,7 +331,7 @@ impl MihomoApp {
                             .pt_2()
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(13.))
                                     .text_color(cx.theme().muted_foreground)
                                     .child("进程匹配模式 (find-process-mode):"),
                             )
@@ -352,7 +359,7 @@ impl MihomoApp {
                             .gap_2()
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(13.))
                                     .text_color(cx.theme().muted_foreground)
                                     .child("内核日志级别 (log-level):"),
                             )
@@ -460,7 +467,7 @@ impl MihomoApp {
                         .when(answers.is_empty(), |el| {
                             el.child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(13.))
                                     .text_color(theme.muted_foreground)
                                     .child("无 Answer 记录返回"),
                             )
@@ -476,8 +483,9 @@ impl MihomoApp {
                                 .bg(theme.background.opacity(0.6))
                                 .border_1()
                                 .border_color(theme.border)
-                                .text_xs()
-                                .font_family("Consolas")
+                                .font_family(theme.mono_font_family.clone())
+                                .text_size(theme.mono_font_size)
+                                .line_height(px(20.))
                                 .child(format!("{}  (type={}, TTL={}s)", a.name, a.record_type, a.ttl))
                                 .child(
                                     div()
@@ -502,6 +510,46 @@ impl MihomoApp {
             .gap_4()
             .pr_2()
             .overflow_y_scrollbar()
+            .child({
+                let status = match &self.desktop_update {
+                    UpdateState::Idle => format!("当前版本 v{}", desktop_update::VERSION),
+                    UpdateState::Checking => "正在检查 GitHub Releases…".into(),
+                    UpdateState::Downloading(version) => format!("正在下载 v{version} 安装包…"),
+                    UpdateState::Ready { version, .. } => format!("v{version} 已下载，可以开始更新。"),
+                    UpdateState::Current => format!("当前已是最新版本（v{}）", desktop_update::VERSION),
+                    UpdateState::Failed(error) => error.clone(),
+                };
+                let action = match &self.desktop_update {
+                    UpdateState::Ready { .. } => Button::new("start-desktop-update")
+                        .primary().small().label("开始更新")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let UpdateState::Ready { installer, .. } = &this.desktop_update {
+                                if let Err(error) = desktop_update::launch(installer) {
+                                    this.set_notice(true, format!("安装程序未启动：{error}"));
+                                    cx.notify();
+                                }
+                            }
+                        })),
+                    _ => Button::new("check-desktop-update")
+                        .small().label("检查更新")
+                        .disabled(matches!(self.desktop_update, UpdateState::Checking | UpdateState::Downloading(_)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.desktop_update = UpdateState::Checking;
+                            let tx = this.tx.clone();
+                            crate::runtime::tokio_rt().spawn(async move {
+                                let result = desktop_update::check(desktop_update::BASE_VERSION, |version| {
+                                    let _ = tx.send(UiEvent::DesktopUpdate(UpdateState::Downloading(version)));
+                                }).await;
+                                let state = result.unwrap_or_else(|e| UpdateState::Failed(format!("检查更新失败：{e:#}")));
+                                let _ = tx.send(UiEvent::DesktopUpdate(state));
+                            });
+                            cx.notify();
+                        })),
+                };
+                card(cx).h_flex().items_center().justify_between().gap_3()
+                    .child(section_header("应用更新", status, cx))
+                    .child(action)
+            })
             // Windows Service Settings
             .child(
                 card(cx)
@@ -514,21 +562,11 @@ impl MihomoApp {
                             .justify_between()
                             .flex_wrap()
                             .gap_2()
-                            .child(section_title("Windows 服务配置", cx))
+                            .child(section_title("Windows 服务", cx))
                             .child(
                                 div()
                                     .h_flex()
                                     .gap_1p5()
-                                    .child(
-                                        Button::new("auto-discover-svc")
-                                            .small()
-                                            .icon(IconName::Sparkles)
-                                            .label("自动探测")
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.auto_discover_service(window, cx);
-                                                cx.notify();
-                                            })),
-                                    )
                                     .child(
                                         Button::new("settings-install-svc")
                                             .primary()
@@ -552,11 +590,7 @@ impl MihomoApp {
                                             })),
                                     ),
                             ),
-                    )
-                    .child(labeled_input("Windows 服务名", &self.setting_service_name, cx))
-                    .child(labeled_input("Mihomo 核心路径 (mihomo.exe)", &self.setting_core_path, cx))
-                    .child(labeled_input("工作目录 (-d)", &self.setting_work_dir, cx))
-                    .child(labeled_input("服务生效配置文件 (-f)", &self.setting_config_path, cx)),
+                    ),
             )
             // Appearance & Theme Card
             .child(
@@ -615,7 +649,7 @@ impl MihomoApp {
                     .justify_between()
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(px(13.))
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("应用数据目录: {}", config::app_data_dir().display())),
                     )
@@ -662,8 +696,8 @@ fn labeled_input(
         .gap_1()
         .child(
             div()
-                .text_xs()
-                .font_semibold()
+                .text_sm()
+                .font_medium()
                 .text_color(theme.muted_foreground)
                 .child(label.to_string()),
         )

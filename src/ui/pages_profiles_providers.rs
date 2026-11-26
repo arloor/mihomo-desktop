@@ -181,6 +181,7 @@ impl MihomoApp {
                                             .h_flex()
                                             .items_center()
                                             .gap_2()
+                                            .flex_wrap()
                                             .child(
                                                 div()
                                                     .text_base()
@@ -228,7 +229,7 @@ impl MihomoApp {
                                                     "act-{pid}"
                                                 )))
                                                 .primary()
-                                                .xsmall()
+                                                .small()
                                                 .icon(IconName::Check)
                                                 .label(if is_active { "重新应用" } else { "启用" })
                                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -241,7 +242,7 @@ impl MihomoApp {
                                                     Button::new(SharedString::from(format!(
                                                         "upd-{pid_upd}"
                                                     )))
-                                                    .xsmall()
+                                                    .small()
                                                     .icon(IconName::RefreshCw)
                                                     .label("更新")
                                                     .on_click(cx.listener(
@@ -256,7 +257,7 @@ impl MihomoApp {
                                                 Button::new(SharedString::from(format!(
                                                     "prev-{pid_prev}"
                                                 )))
-                                                .xsmall()
+                                                .small()
                                                 .icon(IconName::Eye)
                                                 .label("预览合并")
                                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -269,7 +270,7 @@ impl MihomoApp {
                                                     "del-{pid_del}"
                                                 )))
                                                 .danger()
-                                                .xsmall()
+                                                .small()
                                                 .icon(IconName::Trash)
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     this.delete_profile(&pid_del);
@@ -280,7 +281,7 @@ impl MihomoApp {
                             )
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(13.))
                                     .text_color(theme.muted_foreground)
                                     .child(format!(
                                         "{}  ·  更新于 {}",
@@ -309,7 +310,7 @@ impl MihomoApp {
                                             div()
                                                 .h_flex()
                                                 .justify_between()
-                                                .text_xs()
+                                                .text_size(px(13.))
                                                 .text_color(theme.muted_foreground)
                                                 .child(format!(
                                                     "已用 {} / {}{}",
@@ -361,7 +362,7 @@ impl MihomoApp {
                                 .child(
                                     Button::new("close-yaml-preview")
                                         .ghost()
-                                        .xsmall()
+                                        .small()
                                         .icon(IconName::X)
                                         .label("关闭预览")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -377,8 +378,9 @@ impl MihomoApp {
                                 .bg(theme.background)
                                 .border_1()
                                 .border_color(theme.border)
-                                .text_xs()
-                                .font_family("Consolas")
+                                .font_family(theme.mono_font_family.clone())
+                                .text_size(theme.mono_font_size)
+                                .line_height(px(20.))
                                 .text_color(theme.foreground)
                                 .child(yaml),
                         ),
@@ -433,12 +435,12 @@ impl MihomoApp {
                             .children(
                                 [
                                     (
-                                        ProvidersTab::ProxyProviders,
-                                        format!("代理集合 ({})", proxy_provs.len()),
-                                    ),
-                                    (
                                         ProvidersTab::RuleProviders,
                                         format!("规则集合 ({})", rule_provs.len()),
+                                    ),
+                                    (
+                                        ProvidersTab::ProxyProviders,
+                                        format!("代理集合 ({})", proxy_provs.len()),
                                     ),
                                     (
                                         ProvidersTab::Rules,
@@ -585,7 +587,7 @@ impl MihomoApp {
                                     )
                                     .child(
                                         div()
-                                            .text_xs()
+                                            .text_size(px(13.))
                                             .text_color(theme.muted_foreground)
                                             .child(format!(
                                                 "更新时间: {}{}",
@@ -678,7 +680,7 @@ impl MihomoApp {
                                             )
                                             .child(
                                                 div()
-                                                    .text_xs()
+                                                    .text_size(px(13.))
                                                     .text_color(theme.muted_foreground)
                                                     .child(format!(
                                                         "格式: {}  ·  更新时间: {}",
@@ -708,7 +710,7 @@ impl MihomoApp {
                             .gap_1p5()
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(13.))
                                     .text_color(theme.muted_foreground)
                                     .child(format!(
                                         "共 {} 条规则，当前显示前 {} 条匹配结果",

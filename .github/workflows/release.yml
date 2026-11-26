@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0). Leave empty to use Cargo.toml version."
+        description: "Release tag (e.g. v0.1.0). Leave empty when running on a release tag."
         required: false
         default: ""
 
@@ -28,18 +28,15 @@ jobs:
       - name: Resolve release tag and version
         id: meta
         shell: pwsh
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
         run: |
-          if ("${{ github.event_name }}" -eq "push") {
-            $tag = "${{ github.ref_name }}"
-          } elseif ("${{ inputs.tag }}" -ne "") {
-            $tag = "${{ inputs.tag }}"
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and -not $env:REQUESTED_TAG) {
+            $tag = $env:GITHUB_REF_NAME
+          } elseif ($env:REQUESTED_TAG) {
+            $tag = $env:REQUESTED_TAG
           } else {
-            $cargo = Get-Content Cargo.toml -Raw
-            if ($cargo -match '(?m)^version\s*=\s*"([^"]+)"') {
-              $tag = "v$($Matches[1])"
-            } else {
-              throw "Unable to determine version from Cargo.toml"
-            }
+            throw "Select a release tag or supply the new version tag when publishing from a branch."
           }
           $version = $tag.TrimStart('v')
           echo "tag=$tag" >> $env:GITHUB_OUTPUT

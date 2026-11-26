@@ -1,15 +1,18 @@
 [package]
 name = "mihomo-desktop"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A modern GPUI desktop client for Mihomo (Clash Meta) Windows Service"
 license = "MIT"
 repository = "https://github.com/arloor/mihomo-desktop"
 
 [dependencies]
+semver = "1"
+sha2 = "0.10"
+tempfile = "3"
 gpui-kit = "0.11.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs", "io-util"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "system-proxy"] }
 tokio-tungstenite = "0.26"
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
@@ -40,6 +43,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Threading",
 ] }
+
+[build-dependencies]
+semver = "1"
 
 [profile.release]
 opt-level = 3

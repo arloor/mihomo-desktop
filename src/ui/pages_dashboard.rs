@@ -286,12 +286,13 @@ impl MihomoApp {
                     .h_flex()
                     .w_full()
                     .items_stretch()
+                    .flex_wrap()
                     .gap_3()
                     // System Proxy Card (uniform 2-row layout)
                     .child(
                         card(cx)
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(240.))
                             .v_flex()
                             .justify_between()
                             .gap_2()
@@ -381,7 +382,7 @@ impl MihomoApp {
                     .child(
                         card(cx)
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(240.))
                             .v_flex()
                             .justify_between()
                             .gap_2()
@@ -436,7 +437,7 @@ impl MihomoApp {
                     .child(
                         card(cx)
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(240.))
                             .v_flex()
                             .justify_between()
                             .gap_2()
@@ -526,7 +527,7 @@ impl MihomoApp {
                     .child(
                         card(cx)
                             .flex_1()
-                            .min_w(px(300.))
+                            .min_w(px(400.))
                             .v_flex()
                             .gap_2()
                             .child(section_title("运行统计", cx))
@@ -743,7 +744,8 @@ impl MihomoApp {
 
         // Responsive column count based on viewport width so cards fill 100% width with no dead margin
         let avail_w = (f32::from(window.viewport_size().width) - 260.0).max(400.0);
-        let grid_cols = ((avail_w + 12.0) / 216.0).floor().clamp(2.0, 5.0) as u16;
+        let group_cols = ((avail_w + 8.0) / 180.0).floor().max(1.0) as u16;
+        let grid_cols = ((avail_w + 12.0) / 288.0).floor().clamp(2.0, 5.0) as u16;
 
         let groups = self.sorted_proxy_groups();
         let active_group_name = self
@@ -914,8 +916,12 @@ impl MihomoApp {
             // 2. Group Tabs Strip (polished pills with mini flags for active nodes)
             .child(
                 div()
-                    .h_flex()
-                    .flex_wrap()
+                    .id("proxy-group-grid")
+                    .grid()
+                    .grid_cols(group_cols)
+                    .w_full()
+                    .max_h(window.viewport_size().height * 0.34)
+                    .overflow_y_scroll()
                     .gap_2()
                     .children(groups.iter().map(|gname| {
                         let is_sel = active_group_name.as_deref() == Some(gname.as_str());
@@ -938,11 +944,12 @@ impl MihomoApp {
                             .items_center()
                             .gap_2()
                             .px_3()
-                            .py_1p5()
+                            .h(px(46.))
+                            .min_w_0()
                             .rounded_lg()
                             .cursor_pointer()
                             .border_1()
-                            .text_xs()
+                            .text_sm()
                             .when(is_sel, |el| {
                                 el.bg(accent)
                                     .border_color(accent)
@@ -963,12 +970,13 @@ impl MihomoApp {
                                 this.selected_group = Some(gname_owned.clone());
                                 cx.notify();
                             }))
-                            .child(gname.clone())
+                            .child(div().min_w_0().truncate().child(gname.clone()))
                             .when(!now_label.is_empty(), |el| {
                                 el.child(
                                     div()
                                         .h_flex()
                                         .items_center()
+                                        .min_w_0()
                                         .gap_1()
                                         .px_1p5()
                                         .py(px(1.))
@@ -995,7 +1003,7 @@ impl MihomoApp {
                                                     theme.muted_foreground
                                                 })
                                                 .font_normal()
-                                                .max_w(px(92.))
+                                                .min_w_0()
                                                 .truncate()
                                                 .child(now_label),
                                         ),
@@ -1031,7 +1039,7 @@ impl MihomoApp {
                             .flex_wrap()
                             .gap_2()
                             .px_4()
-                            .py_2p5()
+                            .py_3()
                             .rounded_xl()
                             .bg(subtle_surface)
                             .border_1()
@@ -1044,7 +1052,7 @@ impl MihomoApp {
                                     .gap_2p5()
                                     .child(
                                         div()
-                                            .text_sm()
+                                            .text_base()
                                             .font_bold()
                                             .text_color(theme.foreground)
                                             .child(gname.clone()),
@@ -1057,7 +1065,7 @@ impl MihomoApp {
                                             .bg(accent.opacity(0.12))
                                             .border_1()
                                             .border_color(accent.opacity(0.28))
-                                            .text_size(px(11.))
+                                            .text_sm()
                                             .font_semibold()
                                             .text_color(accent)
                                             .child(gtype.clone()),
@@ -1073,7 +1081,7 @@ impl MihomoApp {
                                             .h_flex()
                                             .items_center()
                                             .gap_1p5()
-                                            .text_xs()
+                                            .text_sm()
                                             .child(
                                                 div()
                                                     .text_color(theme.muted_foreground)
@@ -1103,7 +1111,7 @@ impl MihomoApp {
                                     )
                                     .child(
                                         div()
-                                            .text_xs()
+                                            .text_sm()
                                             .text_color(theme.muted_foreground)
                                             .child(format!("·  {} 个节点", node_names.len())),
                                     ),
@@ -1124,7 +1132,7 @@ impl MihomoApp {
                                                 .bg(card_bg)
                                                 .border_1()
                                                 .border_color(card_border)
-                                                .text_xs()
+                                                .text_sm()
                                                 .font_medium()
                                                 .text_color(theme.foreground)
                                                 .cursor_pointer()
@@ -1151,7 +1159,7 @@ impl MihomoApp {
                                             .rounded_lg()
                                             .bg(accent)
                                             .text_color(white)
-                                            .text_xs()
+                                            .text_sm()
                                             .font_semibold()
                                             .cursor_pointer()
                                             .hover(|s| s.bg(accent_hover))
@@ -1210,9 +1218,9 @@ impl MihomoApp {
                                             .justify_between()
                                             .gap_3()
                                             .min_w_0()
-                                            .min_h(px(84.))
-                                            .px_3p5()
-                                            .py_3()
+                                            .min_h(px(106.))
+                                            .px_4()
+                                            .py_4()
                                             .rounded_xl()
                                             .border_1()
                                             .overflow_hidden()
@@ -1279,7 +1287,7 @@ impl MihomoApp {
                                                                 div()
                                                                     .flex_1()
                                                                     .min_w_0()
-                                                                    .text_sm()
+                                                                    .text_size(px(17.))
                                                                     .font_semibold()
                                                                     .truncate()
                                                                     .text_color(if is_current {
@@ -1335,7 +1343,7 @@ impl MihomoApp {
                                                                     } else {
                                                                         chip_bg
                                                                     })
-                                                                    .text_size(px(10.5))
+                                                                    .text_sm()
                                                                     .font_medium()
                                                                     .text_color(if is_current {
                                                                         accent.opacity(0.9)
@@ -1352,7 +1360,7 @@ impl MihomoApp {
                                                                         .py(px(1.5))
                                                                         .rounded(px(5.))
                                                                         .bg(theme.info.opacity(0.12))
-                                                                        .text_size(px(10.))
+                                                                        .text_sm()
                                                                         .font_semibold()
                                                                         .text_color(theme.info)
                                                                         .child("UDP"),
@@ -1364,7 +1372,7 @@ impl MihomoApp {
                                                                         .flex_1()
                                                                         .min_w_0()
                                                                         .truncate()
-                                                                        .text_size(px(11.))
+                                                                        .text_sm()
                                                                         .text_color(
                                                                             theme.muted_foreground,
                                                                         )
@@ -1387,7 +1395,7 @@ impl MihomoApp {
                                                             .bg(d_color.opacity(0.12))
                                                             .border_1()
                                                             .border_color(d_color.opacity(0.24))
-                                                            .text_size(px(11.))
+                                                            .text_sm()
                                                             .font_semibold()
                                                             .text_color(d_color)
                                                             .cursor_pointer()

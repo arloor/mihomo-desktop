@@ -53,9 +53,9 @@ impl AppPage {
     pub const ALL: [Self; 8] = [
         Self::Dashboard,
         Self::Proxies,
+        Self::Connections,
         Self::Profiles,
         Self::Providers,
-        Self::Connections,
         Self::Cores,
         Self::Tools,
         Self::Settings,
@@ -149,11 +149,12 @@ pub fn section_header(title: impl Into<SharedString>, subtitle: impl Into<Shared
     let theme = cx.theme();
     div()
         .v_flex()
-        .gap_0p5()
+        .gap_1()
         .child(section_title(title, cx))
         .child(
             div()
-                .text_xs()
+                .text_sm()
+                .line_height(px(21.))
                 .text_color(theme.muted_foreground)
                 .child(subtitle.into()),
         )

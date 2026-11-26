@@ -252,10 +252,9 @@ impl MihomoApp {
                                             )
                                             .child(
                                                 div()
-                                                    .text_xs()
+                                                    .text_size(px(13.))
                                                     .text_color(theme.muted_foreground)
-                                                    .overflow_hidden()
-                                                    .whitespace_nowrap()
+                                                    .whitespace_normal()
                                                     .child(format!(
                                                         "{started}  ·  链路: {}  ·  规则: {}  ·  来源: {}:{}",
                                                         chain,
@@ -358,7 +357,7 @@ impl MihomoApp {
                             )
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(13.))
                                     .text_color(theme.muted_foreground)
                                     .child(format!(
                                         "目标路径: {}  ·  服务名: {} ({})",
@@ -397,7 +396,7 @@ impl MihomoApp {
                     .when(self.local_cores.is_empty(), |el| {
                         el.child(
                             div()
-                                .text_xs()
+                                .text_size(px(13.))
                                 .text_color(theme.muted_foreground)
                                 .child("尚未下载本地核心，请从下方 GitHub Release 列表中选择版本下载。"),
                         )
@@ -428,7 +427,7 @@ impl MihomoApp {
                                     )
                                     .child(
                                         div()
-                                            .text_xs()
+                                            .text_size(px(13.))
                                             .text_color(theme.muted_foreground)
                                             .child(format!(
                                                 "{}  ·  {}",
@@ -526,7 +525,7 @@ impl MihomoApp {
                         el.child(
                             div()
                                 .py_4()
-                                .text_xs()
+                                .text_size(px(13.))
                                 .text_color(theme.muted_foreground)
                                 .child("暂无版本列表"),
                         )
@@ -589,7 +588,7 @@ impl MihomoApp {
                                             })
                                             .child(
                                                 div()
-                                                    .text_xs()
+                                                    .text_size(px(13.))
                                                     .text_color(theme.muted_foreground)
                                                     .child(format!(
                                                         "{pub_date} · {} 个 Windows 构建",

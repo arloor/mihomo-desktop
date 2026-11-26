@@ -7,13 +7,18 @@ mod runtime;
 mod system;
 mod ui;
 
-use gpui_kit::component::TitleBar;
+use gpui_kit::component::{Theme, TitleBar};
 use gpui_kit::*;
 use system::service_host::{self, CliMode};
 use system::tray;
 use ui::MihomoApp;
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        println!("{}", system::desktop_update::VERSION);
+        return;
+    }
+
     // Handle headless Windows Service & Setup CLI modes before initializing GPUI/GPU context.
     match service_host::parse_cli_args() {
         CliMode::RunService(args) => {
@@ -59,6 +64,18 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
+
+            let installed = cx.text_system().all_font_names();
+            if let Some(family) = ["Microsoft YaHei UI", "微软雅黑 UI", "Microsoft YaHei", "微软雅黑"]
+                .into_iter()
+                .find(|family| installed.iter().any(|name| name == family))
+            {
+                Theme::update(cx, |theme| {
+                    for config in [&mut theme.light_theme, &mut theme.dark_theme] {
+                        std::rc::Rc::make_mut(config).font_family = Some(family.into());
+                    }
+                });
+            }
 
             let bounds = Bounds::centered(None, size(px(1180.), px(760.)), cx);
             let mut titlebar = TitleBar::title_bar_options();
