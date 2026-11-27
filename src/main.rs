@@ -6,6 +6,7 @@ mod mihomo;
 mod runtime;
 mod system;
 mod ui;
+mod version;
 
 use gpui_kit::component::{Theme, TitleBar};
 use gpui_kit::*;
@@ -14,9 +15,20 @@ use system::tray;
 use ui::MihomoApp;
 
 fn main() {
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
-        println!("{}", system::desktop_update::VERSION);
-        return;
+    match std::env::args_os()
+        .nth(1)
+        .and_then(|arg| arg.into_string().ok())
+        .as_deref()
+    {
+        Some("-V") => {
+            println!("{}", version::SHORT_CLI_VERSION);
+            return;
+        }
+        Some("--version") => {
+            println!("{}", version::long_cli_version());
+            return;
+        }
+        _ => {}
     }
 
     // Handle headless Windows Service & Setup CLI modes before initializing GPUI/GPU context.
@@ -59,6 +71,8 @@ fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    tracing::info!("Starting mihomo-desktop {}", version::long_version());
 
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)

@@ -4,7 +4,7 @@
 
 #define MyAppName "Mihomo Desktop"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.2"
 #endif
 #define MyAppPublisher "Mihomo Desktop"
 #define MyAppExeName "mihomo-desktop.exe"

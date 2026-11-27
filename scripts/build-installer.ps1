@@ -1,7 +1,6 @@
 param(
     [string]$CorePath = "",
     [string]$GitHubMirror = "",
-    [string]$Version = "",
     [switch]$DownloadCore,
     [switch]$SkipBuild,
     [switch]$RefreshGeo
@@ -11,20 +10,12 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
-$Version = $Version.TrimStart('v')
-
 $MirrorPrefix = if ($GitHubMirror) { $GitHubMirror.TrimEnd('/') + '/' } else { "" }
 
 Write-Host "==> 1. Building mihomo-desktop (release)..." -ForegroundColor Cyan
 if (-not $SkipBuild) {
-    $previousVersion = $env:MIHOMO_DESKTOP_VERSION
-    try {
-        if ($Version) { $env:MIHOMO_DESKTOP_VERSION = $Version } else { Remove-Item Env:MIHOMO_DESKTOP_VERSION -ErrorAction SilentlyContinue }
-        cargo build --release
-        if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed" }
-    } finally {
-        $env:MIHOMO_DESKTOP_VERSION = $previousVersion
-    }
+    cargo build --release
+    if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed" }
 }
 
 $DesktopExe = Join-Path $RepoRoot "target\release\mihomo-desktop.exe"
@@ -32,11 +23,27 @@ if (-not (Test-Path $DesktopExe)) {
     throw "Release binary not found: $DesktopExe"
 }
 
-# Use the version compiled into the executable, including with -SkipBuild.
-$builtVersion = & $DesktopExe --version | Select-Object -First 1
-if ($LASTEXITCODE -ne 0 -or -not $builtVersion) { throw "Cannot read version from $DesktopExe" }
-if ($Version -and $Version -cne $builtVersion) { throw "Requested $Version but binary reports $builtVersion" }
-$Version = $builtVersion
+# Verify short (-V) and long (--version) outputs from the compiled binary.
+$shortVersionLine = ([string](& $DesktopExe -V | Select-Object -First 1)).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $shortVersionLine) { throw "Cannot read short version (-V) from $DesktopExe" }
+$longVersionLine = ([string](& $DesktopExe --version | Select-Object -First 1)).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $longVersionLine) { throw "Cannot read long version (--version) from $DesktopExe" }
+Write-Host "    Short version: $shortVersionLine" -ForegroundColor Green
+Write-Host "    Long version:  $longVersionLine" -ForegroundColor Green
+
+if ($shortVersionLine -notmatch '^mihomo-desktop\s+(\S+)$') {
+    throw "Unexpected -V output format: '$shortVersionLine'"
+}
+$Version = $Matches[1]
+if (-not $longVersionLine.StartsWith($shortVersionLine, [System.StringComparison]::Ordinal)) {
+    throw "Long version '$longVersionLine' does not start with short version '$shortVersionLine'"
+}
+if ($env:APP_RELEASE_TAG) {
+    $expectedVersion = $env:APP_RELEASE_TAG.TrimStart('v')
+    if ($Version -cne $expectedVersion) {
+        throw "APP_RELEASE_TAG=$($env:APP_RELEASE_TAG) expects '$expectedVersion', but binary reports '$Version'"
+    }
+}
 Write-Host "==> Packaging version: $Version" -ForegroundColor Cyan
 
 Write-Host "==> 2. Locating bundled mihomo.exe..." -ForegroundColor Cyan

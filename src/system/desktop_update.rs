@@ -7,8 +7,7 @@ use std::time::Duration;
 use tempfile::TempPath;
 use tokio::io::AsyncWriteExt;
 
-pub const VERSION: &str = env!("MIHOMO_DESKTOP_DISPLAY_VERSION");
-pub const BASE_VERSION: &str = env!("MIHOMO_DESKTOP_BASE_VERSION");
+pub use crate::version::{BASE_VERSION, VERSION};
 
 const LATEST: &str = "https://api.github.com/repos/arloor/mihomo-desktop/releases/latest";
 

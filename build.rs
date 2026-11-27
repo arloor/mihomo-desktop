@@ -1,72 +1,196 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const APP_ICON_GROUP_ID: u16 = 1;
 
-fn git(args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git").args(args).output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+fn env_non_empty(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
-fn release_version(tag: &str) -> Option<semver::Version> {
-    semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag)).ok()
-}
-
-fn nearest_release_version() -> Option<semver::Version> {
-    let tags = git(&["tag", "--merged", "HEAD"])?;
-    let mut args = vec!["describe", "--tags", "--abbrev=0"];
-    for tag in tags.lines().filter(|tag| release_version(tag).is_some()) {
-        args.extend(["--match", tag]);
+fn env_bool(name: &str) -> Option<bool> {
+    let raw = env_non_empty(name)?;
+    match raw.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => Some(true),
+        "0" | "false" | "no" => Some(false),
+        _ => None,
     }
-    if args.len() == 3 {
+}
+
+fn git_output(args: &[&str]) -> Option<String> {
+    let output = Command::new("git").args(args).output().ok()?;
+    if !output.status.success() {
         return None;
     }
-    release_version(&git(&args)?)
+    let text = String::from_utf8(output.stdout).ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn git_success(args: &[&str]) -> bool {
+    Command::new("git")
+        .args(args)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn detect_git_dirty() -> bool {
+    git_output(&["status", "--porcelain", "--untracked-files=no"]).is_some()
+}
+
+fn head_has_exact_tag(expected_tag: &str) -> bool {
+    git_output(&["tag", "--points-at", "HEAD"])
+        .map(|tags| tags.lines().any(|line| line.trim() == expected_tag))
+        .unwrap_or(false)
+}
+
+fn commits_since_ancestor_tag(tag: &str) -> Option<u64> {
+    if !git_success(&["merge-base", "--is-ancestor", tag, "HEAD"]) {
+        return None;
+    }
+    let range = format!("{tag}..HEAD");
+    git_output(&["rev-list", "--count", &range])?.parse::<u64>().ok()
+}
+
+fn emit_git_rerun_hints() {
+    let Some(git_dir_raw) = git_output(&["rev-parse", "--absolute-git-dir"]) else {
+        return;
+    };
+    let git_dir = PathBuf::from(git_dir_raw);
+    let common_dir = git_output(&["rev-parse", "--git-common-dir"])
+        .map(|raw| {
+            let path = PathBuf::from(raw);
+            if path.is_absolute() {
+                path
+            } else {
+                env::current_dir().map(|cwd| cwd.join(&path)).unwrap_or(path)
+            }
+        })
+        .unwrap_or_else(|| git_dir.clone());
+
+    let head_path = git_dir.join("HEAD");
+    emit_rerun_if_exists(&head_path);
+    emit_rerun_if_exists(&git_dir.join("index"));
+    emit_rerun_if_exists(&common_dir.join("packed-refs"));
+    emit_rerun_if_exists(&common_dir.join("refs").join("tags"));
+
+    if let Ok(head_contents) = fs::read_to_string(&head_path) {
+        if let Some(reference) = head_contents.trim().strip_prefix("ref: ") {
+            emit_rerun_if_exists(&common_dir.join(reference));
+        }
+    }
+}
+
+fn emit_rerun_if_exists(path: &Path) {
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+}
+
+fn format_app_version(
+    pkg_version: &str,
+    git_sha: Option<&str>,
+    exact_release_tag: bool,
+    commits_since_tag: Option<u64>,
+    is_dirty: bool,
+) -> String {
+    if exact_release_tag {
+        if is_dirty {
+            return match git_sha {
+                Some(sha) => format!("{pkg_version}+dirty.g{sha}"),
+                None => format!("{pkg_version}+dirty"),
+            };
+        }
+        return pkg_version.to_string();
+    }
+
+    match git_sha {
+        Some(sha) => {
+            let mut metadata = match commits_since_tag {
+                Some(count) if count > 0 => format!("dev.{count}.g{sha}"),
+                _ => format!("dev.g{sha}"),
+            };
+            if is_dirty {
+                metadata.push_str(".dirty");
+            }
+            format!("{pkg_version}+{metadata}")
+        }
+        None => {
+            if is_dirty {
+                format!("{pkg_version}+dirty")
+            } else {
+                pkg_version.to_string()
+            }
+        }
+    }
+}
+
+fn collect_enabled_features() -> String {
+    let mut features = env::vars()
+        .filter_map(|(key, _)| {
+            key.strip_prefix("CARGO_FEATURE_")
+                .map(str::to_ascii_lowercase)
+        })
+        .filter(|name| name != "default")
+        .collect::<Vec<_>>();
+    features.sort();
+    if features.is_empty() {
+        "none".to_string()
+    } else {
+        features.join(",")
+    }
 }
 
 fn configure_version() {
-    println!("cargo:rerun-if-env-changed=MIHOMO_DESKTOP_VERSION");
-    let mut base = env::var("CARGO_PKG_VERSION").expect("Cargo package version");
-    let mut display = base.clone();
-    if let Ok(release) = env::var("MIHOMO_DESKTOP_VERSION") {
-        base = semver::Version::parse(&release)
-            .expect("invalid release version")
-            .to_string();
-        display = base.clone();
-    } else if let Some(commit) = git(&["rev-parse", "--short", "HEAD"]) {
-        // HEAD may be detached, symbolic, or part of a linked worktree.
-        let mut refs = vec![
-            "HEAD".to_owned(),
-            "refs/tags".to_owned(),
-            "packed-refs".to_owned(),
-        ];
-        refs.extend(git(&["symbolic-ref", "-q", "HEAD"]));
-        for name in refs {
-            if let Some(path) = git(&["rev-parse", "--git-path", &name]) {
-                let path = PathBuf::from(path);
-                if let Some(existing) = path.ancestors().find(|p| p.exists()) {
-                    println!("cargo:rerun-if-changed={}", existing.display());
-                }
-            }
-        }
-        let tags = git(&["tag", "--points-at", "HEAD"]).unwrap_or_default();
-        let exact = tags.lines().filter_map(release_version).max();
-        if let Some(tag) = exact {
-            base = tag.to_string();
-            display = base.clone();
-        } else {
-            if let Some(tag) = nearest_release_version() {
-                base = tag.to_string();
-            }
-            display = format!("{base}-{commit}");
-        }
-    }
-    println!("cargo:rustc-env=MIHOMO_DESKTOP_BASE_VERSION={base}");
-    println!("cargo:rustc-env=MIHOMO_DESKTOP_DISPLAY_VERSION={display}");
+    println!("cargo:rerun-if-env-changed=APP_RELEASE_TAG");
+    println!("cargo:rerun-if-env-changed=APP_GIT_SHA");
+    println!("cargo:rerun-if-env-changed=APP_GIT_DIRTY");
+
+    emit_git_rerun_hints();
+
+    let pkg_version = env::var("CARGO_PKG_VERSION").expect("Cargo package version");
+    let expected_tag = format!("v{pkg_version}");
+
+    let git_sha =
+        env_non_empty("APP_GIT_SHA").or_else(|| git_output(&["rev-parse", "--short=8", "HEAD"]));
+    let is_dirty = env_bool("APP_GIT_DIRTY").unwrap_or_else(detect_git_dirty);
+    let exact_release_tag = match env_non_empty("APP_RELEASE_TAG") {
+        Some(tag) => tag == expected_tag,
+        None => head_has_exact_tag(&expected_tag),
+    };
+
+    let commits_since_tag = if exact_release_tag {
+        None
+    } else {
+        commits_since_ancestor_tag(&expected_tag)
+    };
+
+    let app_version = format_app_version(
+        &pkg_version,
+        git_sha.as_deref(),
+        exact_release_tag,
+        commits_since_tag,
+        is_dirty,
+    );
+    let features = collect_enabled_features();
+    let build_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %:z");
+
+    println!("cargo:rustc-env=APP_VERSION={app_version}");
+    println!(
+        "cargo:rustc-env=APP_GIT_SHA={}",
+        git_sha.as_deref().unwrap_or("unknown")
+    );
+    println!("cargo:rustc-env=APP_BUILD_FEATURES={features}");
+    println!("cargo:rustc-env=APP_BUILD_TIME={build_time}");
 }
 
 fn main() {

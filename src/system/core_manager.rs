@@ -115,7 +115,7 @@ pub fn delete_local_core(tag: &str) -> Result<()> {
 fn build_http_client(proxy_url: Option<&str>, timeout_secs: u64) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
-        .user_agent("mihomo-desktop/0.1.0");
+        .user_agent(concat!("mihomo-desktop/", env!("CARGO_PKG_VERSION")));
     if let Some(p) = proxy_url {
         if let Ok(proxy) = reqwest::Proxy::all(p) {
             builder = builder.proxy(proxy);

@@ -1,21 +1,113 @@
-name: CI
+name: CI & Release
 
 on:
   push:
-    branches: [main]
+    branches: ["main"]
+    tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check-and-test:
-    name: Build & Test (Windows x64)
-    runs-on: windows-latest
+  prepare:
+    name: Resolve Version & Release Mode
+    runs-on: ubuntu-latest
+    outputs:
+      cargo_version: ${{ steps.meta.outputs.cargo_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      should_release: ${{ steps.meta.outputs.should_release }}
+      should_auto_tag: ${{ steps.meta.outputs.should_auto_tag }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      sha_short: ${{ steps.meta.outputs.sha_short }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and release mode
+        id: meta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          cargo_version="$(
+            cargo metadata --no-deps --format-version 1 |
+              jq -r '.packages[] | select(.name == "mihomo-desktop") | .version'
+          )"
+
+          if [[ ! "$cargo_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Cargo.toml version '$cargo_version' is not a valid SemVer version"
+            exit 1
+          fi
+
+          expected_tag="v${cargo_version}"
+          is_prerelease="false"
+          if [[ "$cargo_version" == *-* ]]; then
+            is_prerelease="true"
+          fi
+
+          sha_short="$(git rev-parse --short=8 HEAD)"
+          should_release="false"
+          should_auto_tag="false"
+          release_tag=""
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+              echo "::error::Tag '${GITHUB_REF_NAME}' does not match Cargo.toml version '${cargo_version}' (expected '${expected_tag}')"
+              exit 1
+            fi
+            if gh release view "${expected_tag}" >/dev/null 2>&1; then
+              echo "::error::GitHub Release '${expected_tag}' already exists; official releases are immutable"
+              exit 1
+            fi
+            should_release="true"
+            should_auto_tag="false"
+            release_tag="${expected_tag}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            git fetch --tags origin
+            if git rev-parse -q --verify "refs/tags/${expected_tag}" >/dev/null; then
+              echo "Tag ${expected_tag} already exists; running CI verification only."
+            elif gh release view "${expected_tag}" >/dev/null 2>&1; then
+              echo "::error::GitHub Release '${expected_tag}' already exists without a matching tag"
+              exit 1
+            else
+              echo "Version ${cargo_version} has no tag ${expected_tag} yet; will auto-tag and publish release after builds succeed."
+              should_release="true"
+              should_auto_tag="true"
+              release_tag="${expected_tag}"
+            fi
+          fi
+
+          {
+            echo "cargo_version=${cargo_version}"
+            echo "release_tag=${release_tag}"
+            echo "should_release=${should_release}"
+            echo "should_auto_tag=${should_auto_tag}"
+            echo "is_prerelease=${is_prerelease}"
+            echo "sha_short=${sha_short}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    name: Build & Test (Windows x64)
+    needs: [prepare]
+    runs-on: windows-latest
+    env:
+      APP_RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      APP_GIT_SHA: ${{ needs.prepare.outputs.sha_short }}
+      APP_GIT_DIRTY: "false"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -28,3 +120,142 @@ jobs:
 
       - name: Cargo test
         run: cargo test --verbose
+
+      - name: Verify CLI version metadata (CI build)
+        if: needs.prepare.outputs.should_release != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --bin mihomo-desktop
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+
+          $exe = ".\target\debug\mihomo-desktop.exe"
+          $short = ([string](& $exe -V | Select-Object -First 1)).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $short) { throw "Failed to execute -V" }
+          $long = ([string](& $exe --version | Select-Object -First 1)).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $long) { throw "Failed to execute --version" }
+
+          Write-Host "Short version: $short"
+          Write-Host "Long version:  $long"
+
+          $expectedPrefix = "mihomo-desktop ${{ needs.prepare.outputs.cargo_version }}"
+          if (-not $short.StartsWith($expectedPrefix, [System.StringComparison]::Ordinal)) {
+            throw "Unexpected short version '$short' (expected prefix '$expectedPrefix')"
+          }
+          if (-not $long.StartsWith($short, [System.StringComparison]::Ordinal)) {
+            throw "Long version '$long' does not start with short version '$short'"
+          }
+
+      - name: Ensure Inno Setup 6 is installed
+        if: needs.prepare.outputs.should_release == 'true'
+        shell: pwsh
+        run: |
+          $found = $false
+          foreach ($p in @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+          )) {
+            if (Test-Path $p) { $found = $true; break }
+          }
+          if (-not $found -and -not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            Write-Host "Installing Inno Setup via Chocolatey..."
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build release binary, portable zip, and Inno Setup installer
+        if: needs.prepare.outputs.should_release == 'true'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .\scripts\build-installer.ps1 -DownloadCore
+
+      - name: Generate SHA256 checksums
+        if: needs.prepare.outputs.should_release == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ needs.prepare.outputs.cargo_version }}"
+          $files = @(
+            "dist\MihomoDesktop-Setup-$version-x64.exe",
+            "dist\MihomoDesktop-$version-x64-portable.zip"
+          )
+          $lines = foreach ($f in $files) {
+            if (-not (Test-Path $f)) { throw "Expected artifact not found: $f" }
+            $h = (Get-FileHash -Path $f -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$h  $(Split-Path -Leaf $f)"
+          }
+          $lines | Set-Content -Encoding ASCII "dist\SHA256SUMS.txt"
+          Get-Content "dist\SHA256SUMS.txt"
+
+      - name: Upload release artifacts
+        if: needs.prepare.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            dist/MihomoDesktop-Setup-${{ needs.prepare.outputs.cargo_version }}-x64.exe
+            dist/MihomoDesktop-${{ needs.prepare.outputs.cargo_version }}-x64-portable.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Tag & Publish Immutable Release
+    needs: [prepare, build-and-test]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release_assets
+
+      - name: List release assets
+        run: find release_assets -type f -ls
+
+      - name: Create and push annotated git tag from Cargo.toml version
+        if: needs.prepare.outputs.should_auto_tag == 'true'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::Tag ${RELEASE_TAG} already exists on origin; aborting auto-tag to prevent duplicate release"
+            exit 1
+          fi
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+
+      - name: Create immutable GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+        run: |
+          set -euo pipefail
+          release_args=(
+            "${RELEASE_TAG}"
+            release_assets/*
+            --title "Mihomo Desktop ${RELEASE_TAG}"
+            --generate-notes
+          )
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            release_args+=(--prerelease --latest=false)
+          else
+            release_args+=(--latest)
+          fi
+          gh release create "${release_args[@]}"
