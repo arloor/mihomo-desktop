@@ -3,6 +3,7 @@ use crate::ui::app::MihomoApp;
 use crate::ui::{ProvidersTab, card, delay_color, delay_text, pill_badge, section_header, section_title};
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::SelectableText;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -283,10 +284,13 @@ impl MihomoApp {
                                 div()
                                     .text_size(px(13.))
                                     .text_color(theme.muted_foreground)
-                                    .child(format!(
-                                        "{}  ·  更新于 {}",
-                                        profile.url.as_deref().unwrap_or("本地配置文件"),
-                                        updated_str
+                                    .child(SelectableText::new(
+                                        SharedString::from(format!("profile-source-{}", profile.id)),
+                                        format!(
+                                            "{}  ·  更新于 {}",
+                                            profile.url.as_deref().unwrap_or("本地配置文件"),
+                                            updated_str
+                                        ),
                                     )),
                             )
                             .when_some(profile.subscription_info.as_ref(), |el, sub| {
@@ -382,7 +386,7 @@ impl MihomoApp {
                                 .text_size(theme.mono_font_size)
                                 .line_height(px(20.))
                                 .text_color(theme.foreground)
-                                .child(yaml),
+                                .child(SelectableText::new("yaml-preview", yaml)),
                         ),
                 )
             })
@@ -533,7 +537,10 @@ impl MihomoApp {
                                                         div()
                                                             .text_base()
                                                             .font_semibold()
-                                                            .child(pp.name.clone()),
+                                                            .child(SelectableText::new(
+                                                                SharedString::from(format!("pp-name-{}", pp.name)),
+                                                                pp.name.clone(),
+                                                            )),
                                                     )
                                                     .child(pill_badge(
                                                         pp.vehicle_type.clone(),
@@ -621,7 +628,10 @@ impl MihomoApp {
                                                     .border_1()
                                                     .border_color(theme.border)
                                                     .text_xs()
-                                                    .child(n.name.clone())
+                                                    .child(SelectableText::new(
+                                                        SharedString::from(format!("pp-node-{}-{}", pp.name, n.name)),
+                                                        n.name.clone(),
+                                                    ))
                                                     .child(
                                                         div()
                                                             .text_color(dc)
@@ -663,7 +673,10 @@ impl MihomoApp {
                                                         div()
                                                             .text_sm()
                                                             .font_semibold()
-                                                            .child(rp.name.clone()),
+                                                            .child(SelectableText::new(
+                                                                SharedString::from(format!("rp-name-{}", rp.name)),
+                                                                rp.name.clone(),
+                                                            )),
                                                     )
                                                     .child(pill_badge(
                                                         rp.behavior.clone(),
@@ -754,11 +767,14 @@ impl MihomoApp {
                                                     .overflow_hidden()
                                                     .whitespace_nowrap()
                                                     .text_color(theme.foreground)
-                                                    .child(if rule.payload.is_empty() {
-                                                        "-".to_string()
-                                                    } else {
-                                                        rule.payload.clone()
-                                                    }),
+                                                    .child(SelectableText::new(
+                                                        ("rule-payload", idx),
+                                                        if rule.payload.is_empty() {
+                                                            "-".to_string()
+                                                        } else {
+                                                            rule.payload.clone()
+                                                        },
+                                                    )),
                                             ),
                                     )
                                     .child(pill_badge(rule.proxy.clone(), theme.primary))

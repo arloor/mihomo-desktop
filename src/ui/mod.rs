@@ -7,6 +7,7 @@ pub mod pages_tools_settings;
 
 pub use app::MihomoApp;
 
+use gpui_kit::base::SelectableText;
 use gpui_kit::component::{ActiveTheme as _, StyledExt as _};
 use gpui_kit::*;
 
@@ -147,15 +148,16 @@ pub fn section_title(title: impl Into<SharedString>, cx: &App) -> Div {
 /// Section header with title and optional subtitle.
 pub fn section_header(title: impl Into<SharedString>, subtitle: impl Into<SharedString>, cx: &App) -> Div {
     let theme = cx.theme();
+    let title = title.into();
     div()
         .v_flex()
         .gap_1()
-        .child(section_title(title, cx))
+        .child(section_title(title.clone(), cx))
         .child(
             div()
                 .text_sm()
                 .line_height(px(21.))
                 .text_color(theme.muted_foreground)
-                .child(subtitle.into()),
+                .child(SelectableText::new(title, subtitle.into())),
         )
 }

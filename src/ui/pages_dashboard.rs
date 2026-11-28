@@ -9,6 +9,7 @@ use crate::ui::{
 };
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::SelectableText;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -273,10 +274,10 @@ impl MihomoApp {
                                 .border_color(theme.warning.opacity(0.35))
                                 .text_xs()
                                 .text_color(theme.warning)
-                                .child(format!(
+                                .child(SelectableText::new("controller-error", format!(
                                     "提示：控制器 http://{} 暂未响应（{err}）。请确认服务已启动或在「应用设置」核对地址与密钥。",
                                     self.settings.controller_addr
-                                )),
+                                ))),
                         )
                     }),
             )

@@ -153,6 +153,9 @@ pub struct MihomoApp {
     resident_flag: Arc<AtomicBool>,
     force_quit_flag: Arc<AtomicBool>,
     main_hwnd: Arc<AtomicIsize>,
+
+    // Ctrl+C only reaches Root's selection copy while something in the window holds focus.
+    focus_handle: FocusHandle,
 }
 
 impl MihomoApp {
@@ -320,6 +323,9 @@ impl MihomoApp {
                 .default_value(settings.delay_test_url.clone())
         });
 
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle, cx);
+
         let app = Self {
             page: AppPage::Dashboard,
             settings,
@@ -376,6 +382,7 @@ impl MihomoApp {
             resident_flag,
             force_quit_flag,
             main_hwnd,
+            focus_handle,
         };
 
         app.trigger_full_refresh();
@@ -2057,6 +2064,15 @@ impl Render for MihomoApp {
         let fg = cx.theme().foreground;
 
         div()
+            .track_focus(&self.focus_handle)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if window.focused(cx).is_none() {
+                        window.focus(&this.focus_handle, cx);
+                    }
+                }),
+            )
             .v_flex()
             .size_full()
             .bg(bg)

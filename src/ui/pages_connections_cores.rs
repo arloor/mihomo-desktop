@@ -4,6 +4,7 @@ use crate::ui::app::MihomoApp;
 use crate::ui::{ConnSort, card, pill_badge, section_header, section_title};
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::SelectableText;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -241,7 +242,10 @@ impl MihomoApp {
                                                             .font_semibold()
                                                             .overflow_hidden()
                                                             .whitespace_nowrap()
-                                                            .child(conn.metadata.display_host()),
+                                                            .child(SelectableText::new(
+                                                                SharedString::from(format!("conn-host-{cid}")),
+                                                                conn.metadata.display_host(),
+                                                            )),
                                                     )
                                                     .when(!conn.metadata.process.is_empty(), |el| {
                                                         el.child(pill_badge(
@@ -255,12 +259,15 @@ impl MihomoApp {
                                                     .text_size(px(13.))
                                                     .text_color(theme.muted_foreground)
                                                     .whitespace_normal()
-                                                    .child(format!(
-                                                        "{started}  ·  链路: {}  ·  规则: {}  ·  来源: {}:{}",
-                                                        chain,
-                                                        rule_str,
-                                                        conn.metadata.source_ip,
-                                                        conn.metadata.source_port
+                                                    .child(SelectableText::new(
+                                                        SharedString::from(format!("conn-detail-{cid}")),
+                                                        format!(
+                                                            "{started}  ·  链路: {}  ·  规则: {}  ·  来源: {}:{}",
+                                                            chain,
+                                                            rule_str,
+                                                            conn.metadata.source_ip,
+                                                            conn.metadata.source_port
+                                                        ),
                                                     )),
                                             ),
                                     )
@@ -359,11 +366,14 @@ impl MihomoApp {
                                 div()
                                     .text_size(px(13.))
                                     .text_color(theme.muted_foreground)
-                                    .child(format!(
-                                        "目标路径: {}  ·  服务名: {} ({})",
-                                        self.settings.core_binary_path,
-                                        self.settings.service_name,
-                                        self.service_status.state.label()
+                                    .child(SelectableText::new(
+                                        "core-target-path",
+                                        format!(
+                                            "目标路径: {}  ·  服务名: {} ({})",
+                                            self.settings.core_binary_path,
+                                            self.settings.service_name,
+                                            self.service_status.state.label()
+                                        ),
                                     )),
                             ),
                     )

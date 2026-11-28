@@ -6,6 +6,7 @@ use crate::ui::app::MihomoApp;
 use crate::ui::{ToolsTab, card, pill_badge, section_header, section_title};
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::SelectableText;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -176,7 +177,7 @@ impl MihomoApp {
                                         .child("等待 Mihomo /logs WebSocket 日志流..."),
                                 )
                             })
-                            .children(logs.into_iter().map(|entry| {
+                            .children(logs.into_iter().enumerate().map(|(index, entry)| {
                                 let lvl_color = match entry.level.as_str() {
                                     "error" => theme.danger,
                                     "warning" => theme.warning,
@@ -201,7 +202,7 @@ impl MihomoApp {
                                             .min_w_0()
                                             .whitespace_normal()
                                             .text_color(theme.foreground)
-                                            .child(entry.payload),
+                                            .child(SelectableText::new(("log-payload", index), entry.payload)),
                                     )
                             })),
                     ),
@@ -472,7 +473,7 @@ impl MihomoApp {
                                     .child("无 Answer 记录返回"),
                             )
                         })
-                        .children(answers.into_iter().map(|a| {
+                        .children(answers.into_iter().enumerate().map(|(index, a)| {
                             div()
                                 .h_flex()
                                 .items_center()
@@ -486,12 +487,15 @@ impl MihomoApp {
                                 .font_family(theme.mono_font_family.clone())
                                 .text_size(theme.mono_font_size)
                                 .line_height(px(20.))
-                                .child(format!("{}  (type={}, TTL={}s)", a.name, a.record_type, a.ttl))
+                                .child(SelectableText::new(
+                                    ("dns-answer-name", index),
+                                    format!("{}  (type={}, TTL={}s)", a.name, a.record_type, a.ttl),
+                                ))
                                 .child(
                                     div()
                                         .font_semibold()
                                         .text_color(theme.primary)
-                                        .child(a.data),
+                                        .child(SelectableText::new(("dns-answer-data", index), a.data)),
                                 )
                         })),
                 )
@@ -651,7 +655,10 @@ impl MihomoApp {
                         div()
                             .text_size(px(13.))
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!("应用数据目录: {}", config::app_data_dir().display())),
+                            .child(SelectableText::new(
+                                "app-data-dir",
+                                format!("应用数据目录: {}", config::app_data_dir().display()),
+                            )),
                     )
                     .child(
                         div()
