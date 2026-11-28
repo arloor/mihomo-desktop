@@ -24,9 +24,11 @@ if (-not (Test-Path $DesktopExe)) {
 }
 
 # Verify short (-V) and long (--version) outputs from the compiled binary.
-$shortVersionLine = ([string](& $DesktopExe -V | Select-Object -First 1)).Trim()
+# Drain stdout so PowerShell waits for the GUI-subsystem executable to exit.
+# Select-Object -First 1 can close the pipe early and leave LASTEXITCODE unset.
+$shortVersionLine = (& $DesktopExe -V | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $shortVersionLine) { throw "Cannot read short version (-V) from $DesktopExe" }
-$longVersionLine = ([string](& $DesktopExe --version | Select-Object -First 1)).Trim()
+$longVersionLine = (& $DesktopExe --version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $longVersionLine) { throw "Cannot read long version (--version) from $DesktopExe" }
 Write-Host "    Short version: $shortVersionLine" -ForegroundColor Green
 Write-Host "    Long version:  $longVersionLine" -ForegroundColor Green
@@ -131,6 +133,9 @@ foreach ($asset in $GeoAssets) {
 Write-Host "==> 4. Staging bundle into dist\stage..." -ForegroundColor Cyan
 $StageDir = Join-Path $RepoRoot "dist\stage"
 $StageGeoDir = Join-Path $StageDir "geo"
+if (Test-Path $StageDir) {
+    Remove-Item -Recurse -Force $StageDir
+}
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 New-Item -ItemType Directory -Force -Path $StageGeoDir | Out-Null
 Copy-Item -Force $DesktopExe (Join-Path $StageDir "mihomo-desktop.exe")
